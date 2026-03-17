@@ -78,11 +78,18 @@ training:
   # Mixed precision
   dtype: "bfloat16"
 
-  # Checkpointing
+  # Checkpointing & logging
   checkpoint_dir: "checkpoints"
   save_every_steps: 5000
   eval_every_steps: 1000
   log_every_steps: 100
+  generate_every_steps: 5000    # Generate samples to see progress
+
+  # Sample prompts for generation during training
+  sample_prompts:
+    - "Once upon a time"
+    - "The little girl"
+    - "There was a big"
 
   # Meta-optimizer (Phase 5, optional)
   meta:

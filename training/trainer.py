@@ -1,16 +1,17 @@
-"""Main training loop for HCLM-D.
+"""Main training loop for HCLM-D (v0.2).
 
-Includes automatic performance optimizations:
+Includes:
 - torch.compile with fallback
-- Auto batch size detection (tries larger, falls back on OOM)
-- Learning rate scaling with batch size
-- Auto num_workers based on available CPUs
+- Meta-optimizer integration (Phase 5)
+- Dashboard reporter (real-time metrics)
+- Sample generation during training
+- Auto eval (perplexity) at checkpoints
+- Throughput logging
 """
 
 from __future__ import annotations
 
 import logging
-import math
 import os
 import time
 from pathlib import Path
@@ -44,15 +45,6 @@ def _try_compile(model: nn.Module) -> nn.Module:
         return model
 
 
-def _auto_workers() -> int:
-    """Pick num_workers based on available CPUs."""
-    cpu_count = os.cpu_count() or 4
-    workers = min(8, cpu_count // 2)
-    workers = max(2, workers)
-    logger.info("Auto num_workers: %d (detected %d CPUs)", workers, cpu_count)
-    return workers
-
-
 class Trainer:
     """Main training loop for HCLM-D.
 
@@ -60,8 +52,10 @@ class Trainer:
         - Masked diffusion training (LLaDA-style)
         - Structural warmup (gate schedule, cluster freezing)
         - Loss computation with auxiliary losses
+        - Meta-optimizer (optional, Phase 5)
+        - Dashboard reporting (optional)
+        - Sample generation during training
         - Logging and checkpointing
-        - Automatic performance optimizations
     """
 
     def __init__(
@@ -87,6 +81,9 @@ class Trainer:
             self.model = _try_compile(model)
         else:
             self.model = model
+
+        # Keep reference to unwrapped model for generation/meta
+        self._raw_model = model
 
         # Optimizer and scheduler
         self.optimizer = build_optimizer(self.model, train_cfg)
@@ -119,6 +116,7 @@ class Trainer:
         self.eval_every = train_cfg.get("eval_every_steps", 1000)
         self.save_every = train_cfg.get("save_every_steps", 5000)
         self.checkpoint_dir = Path(train_cfg.get("checkpoint_dir", "checkpoints"))
+        self.generate_every = train_cfg.get("generate_every_steps", 5000)
 
         # Gradient accumulation
         self.grad_accum_steps = train_cfg.get("gradient_accumulation", 1)
@@ -131,6 +129,80 @@ class Trainer:
         # Throughput tracking
         self._step_start = None
         self._tokens_processed = 0
+        self._best_loss = float("inf")
+
+        # ── Meta-optimizer (optional) ──
+        meta_cfg = train_cfg.get("meta", {})
+        self.meta_enabled = meta_cfg.get("enabled", False)
+        self.meta_optimizer = None
+        self.meta_scheduler = None
+        self.grad_stats = None
+
+        if self.meta_enabled:
+            self._init_meta_optimizer(meta_cfg)
+
+        # ── Dashboard reporter (optional) ──
+        self.reporter = None
+        self._init_dashboard_reporter(train_cfg)
+
+        # ── Generation config ──
+        self.sample_prompts = train_cfg.get("sample_prompts", [
+            "Once upon a time",
+            "The little girl",
+            "There was a big",
+        ])
+        self.tokenizer = None  # Set externally via set_tokenizer()
+
+    def _init_meta_optimizer(self, meta_cfg: dict) -> None:
+        """Initialize meta-optimizer if enabled."""
+        try:
+            from meta.meta_model import MetaOptimizer
+            from meta.groups import get_parameter_groups
+            from meta.scheduler import MetaScheduler
+            from meta.stats import GradientStats
+
+            param_groups = get_parameter_groups(self._raw_model)
+            self.meta_optimizer = MetaOptimizer(
+                param_groups=param_groups,
+                meta_lr=meta_cfg.get("meta_lr", 1e-4),
+                hidden_dim=meta_cfg.get("hidden_dim", 128),
+                update_every=meta_cfg.get("update_every", 100),
+            )
+            self.meta_scheduler = MetaScheduler(
+                enable_after_step=meta_cfg.get("enable_after_step", 100000),
+                update_every=meta_cfg.get("update_every", 100),
+            )
+            self.grad_stats = GradientStats()
+            # Move meta model to device
+            self.meta_optimizer.meta_model = self.meta_optimizer.meta_model.to(self.device)
+            logger.info(
+                "Meta-optimizer: ON (activates at step %d, updates every %d steps)",
+                meta_cfg.get("enable_after_step", 100000),
+                meta_cfg.get("update_every", 100),
+            )
+        except Exception as e:
+            logger.warning("Meta-optimizer init failed (%s), disabling", e)
+            self.meta_enabled = False
+
+    def _init_dashboard_reporter(self, train_cfg: dict) -> None:
+        """Initialize dashboard reporter if reachable."""
+        try:
+            from training.dashboard_reporter import DashboardReporter
+
+            run_name = self.config.get("wandb", {}).get("run_name", "default")
+            self.reporter = DashboardReporter(
+                run=run_name,
+                batch_size=train_cfg.get("log_every_steps", 100),
+            )
+            if not self.reporter._enabled:
+                self.reporter = None
+        except Exception as e:
+            logger.debug("Dashboard reporter not available: %s", e)
+            self.reporter = None
+
+    def set_tokenizer(self, tokenizer) -> None:
+        """Set tokenizer for sample generation during training."""
+        self.tokenizer = tokenizer
 
     def train(self) -> None:
         """Run the main training loop."""
@@ -150,6 +222,17 @@ class Trainer:
             self.grad_accum_steps, batch_size * self.grad_accum_steps,
         )
 
+        # Log feature status
+        features = []
+        if self.meta_enabled:
+            features.append("meta-optimizer")
+        if self.reporter:
+            features.append("dashboard")
+        if self.tokenizer:
+            features.append("generation")
+        if features:
+            logger.info("Active features: %s", ", ".join(features))
+
         self._step_start = time.time()
         self._tokens_processed = 0
 
@@ -162,39 +245,47 @@ class Trainer:
                 self.global_step += 1
                 self._tokens_processed += batch["input_ids"].shape[0] * batch["input_ids"].shape[1]
 
-                # Logging with throughput
+                loss_val = loss_output.total.item()
+
+                # Track best loss
+                if loss_val < self._best_loss:
+                    self._best_loss = loss_val
+
+                # ── Meta-optimizer update ──
+                if self.meta_enabled and self.meta_scheduler.should_update(self.global_step):
+                    self._meta_step(loss_val)
+
+                # ── Logging with throughput ──
                 if self.global_step % self.log_every == 0:
-                    elapsed = time.time() - self._step_start
-                    tok_per_sec = self._tokens_processed / elapsed if elapsed > 0 else 0
-                    gpu_mem_used = torch.cuda.memory_allocated() / 1e9 if self.device.type == "cuda" else 0
+                    self._log_step(loss_output)
 
-                    logger.info(
-                        "Step %d | Loss: %.4f (diff: %.4f, bal: %.4f, div: %.4f, hier: %.4f) "
-                        "| %.0f tok/s | GPU: %.1fGB",
-                        self.global_step,
-                        loss_output.total.item(),
-                        loss_output.diffusion.item(),
-                        loss_output.balance.item(),
-                        loss_output.diversity.item(),
-                        loss_output.hierarchy.item(),
-                        tok_per_sec,
-                        gpu_mem_used,
-                    )
-                    # Reset counters
-                    self._step_start = time.time()
-                    self._tokens_processed = 0
+                # ── Dashboard report ──
+                if self.reporter and self.global_step % self.log_every == 0:
+                    self._report_to_dashboard(loss_output)
 
-                # Evaluation
+                # ── Evaluation ──
                 if self.val_loader and self.global_step % self.eval_every == 0:
                     val_loss = self.evaluate()
                     logger.info("Step %d | Val loss: %.4f", self.global_step, val_loss)
+                    if self.reporter:
+                        self.reporter.report(
+                            step=self.global_step,
+                            extra={"val_loss": val_loss},
+                        )
 
-                # Checkpointing
+                # ── Checkpointing ──
                 if self.global_step % self.save_every == 0:
                     self.save()
 
-        # Final save
+                # ── Sample generation ──
+                if self.global_step % self.generate_every == 0:
+                    self._generate_samples()
+
+        # Final save and generation
         self.save()
+        self._generate_samples()
+        if self.reporter:
+            self.reporter.close()
         logger.info("Training complete at step %d", self.global_step)
 
     def train_step(self, batch: dict[str, torch.Tensor]):
@@ -217,7 +308,6 @@ class Trainer:
             logits = self.model(masked_ids, attention_mask, gate_override=gate_override)
 
             # Get routing info for auxiliary losses
-            routing_weights = None
             fine_centroids = None
             coarse_centroids = None
 
@@ -242,6 +332,23 @@ class Trainer:
         self.optimizer.zero_grad()
         loss_output.total.backward()
 
+        # ── Meta-optimizer: collect gradient stats ──
+        if self.meta_enabled and self.grad_stats is not None and self.meta_scheduler.is_active(self.global_step):
+            from meta.groups import get_parameter_groups
+            param_groups = get_parameter_groups(self._raw_model)
+            for group_name, params in param_groups.items():
+                for p in params:
+                    if p.grad is not None:
+                        self.grad_stats.update(group_name, p)
+                        break  # One representative param per group
+
+        # ── Meta-optimizer: apply LR multipliers ──
+        if (self.meta_enabled and self.meta_optimizer is not None
+                and self.meta_scheduler.is_active(self.global_step)
+                and self.grad_stats is not None):
+            multipliers = self.meta_optimizer.get_multipliers(self.grad_stats)
+            self._apply_meta_multipliers(multipliers)
+
         if self.grad_clip > 0:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
 
@@ -250,6 +357,164 @@ class Trainer:
             self.scheduler.step()
 
         return loss_output
+
+    def _meta_step(self, current_loss: float) -> None:
+        """Update the meta-optimizer."""
+        if self.meta_optimizer is None or self.grad_stats is None:
+            return
+        try:
+            self.meta_optimizer.update(current_loss, self.grad_stats)
+            multipliers = self.meta_optimizer.get_multipliers(self.grad_stats)
+            logger.info(
+                "Step %d | Meta multipliers: %s",
+                self.global_step,
+                {k: f"{v:.3f}" for k, v in multipliers.items()},
+            )
+            self.grad_stats.reset()
+        except Exception as e:
+            logger.warning("Meta-optimizer update failed: %s", e)
+
+    def _apply_meta_multipliers(self, multipliers: dict[str, float]) -> None:
+        """Scale gradients by meta-optimizer multipliers."""
+        from meta.groups import get_parameter_groups
+        param_groups = get_parameter_groups(self._raw_model)
+        for group_name, params in param_groups.items():
+            mult = multipliers.get(group_name, 1.0)
+            if mult != 1.0:
+                for p in params:
+                    if p.grad is not None:
+                        p.grad.mul_(mult)
+
+    def _log_step(self, loss_output) -> None:
+        """Log training metrics with throughput."""
+        elapsed = time.time() - self._step_start
+        tok_per_sec = self._tokens_processed / elapsed if elapsed > 0 else 0
+        gpu_mem_used = torch.cuda.memory_allocated() / 1e9 if self.device.type == "cuda" else 0
+
+        # Cluster health info
+        cluster_info = ""
+        if isinstance(self._raw_model.embedding, CompositeEmbedding):
+            try:
+                info = self._raw_model.embedding.get_routing_info()
+                gate_info = info.get("gate_value")
+                if gate_info is not None:
+                    gate_val = gate_info if isinstance(gate_info, (int, float)) else gate_info.mean().item()
+                    cluster_info = f" | gate: {gate_val:.3f}"
+            except Exception:
+                pass
+
+        logger.info(
+            "Step %d | Loss: %.4f (diff: %.4f, bal: %.4f, div: %.4f, hier: %.4f) "
+            "| %.0f tok/s | GPU: %.1fGB%s",
+            self.global_step,
+            loss_output.total.item(),
+            loss_output.diffusion.item(),
+            loss_output.balance.item(),
+            loss_output.diversity.item(),
+            loss_output.hierarchy.item(),
+            tok_per_sec,
+            gpu_mem_used,
+            cluster_info,
+        )
+
+        # Reset counters
+        self._step_start = time.time()
+        self._tokens_processed = 0
+
+    def _report_to_dashboard(self, loss_output) -> None:
+        """Send metrics to dashboard."""
+        if not self.reporter:
+            return
+
+        gpu_mem = torch.cuda.memory_allocated() / 1e9 if self.device.type == "cuda" else 0
+        gpu_util = 0.0
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=2,
+            )
+            if result.returncode == 0:
+                gpu_util = float(result.stdout.strip().split("\n")[0]) / 100.0
+        except Exception:
+            pass
+
+        # Get cluster health metrics
+        cluster_health = {}
+        gate_metrics = {}
+        hierarchy_metrics = {}
+
+        if isinstance(self._raw_model.embedding, CompositeEmbedding):
+            try:
+                info = self._raw_model.embedding.get_routing_info()
+                gate_info = info.get("gate_value")
+                if gate_info is not None:
+                    gate_val = gate_info if isinstance(gate_info, (int, float)) else gate_info.mean().item()
+                    gate_std = 0.0 if isinstance(gate_info, (int, float)) else gate_info.std().item()
+                    gate_metrics = {"mean": gate_val, "std": gate_std}
+            except Exception:
+                pass
+
+        elapsed = time.time() - self._step_start if self._step_start else 1
+        tok_per_sec = self._tokens_processed / elapsed if elapsed > 0 else 0
+
+        self.reporter.report(
+            step=self.global_step,
+            losses={
+                "total": loss_output.total.item(),
+                "diffusion": loss_output.diffusion.item(),
+                "balance": loss_output.balance.item(),
+                "diversity": loss_output.diversity.item(),
+                "hierarchy": loss_output.hierarchy.item(),
+            },
+            cluster_health=cluster_health if cluster_health else None,
+            gate=gate_metrics if gate_metrics else None,
+            hierarchy=hierarchy_metrics if hierarchy_metrics else None,
+            throughput={
+                "tokens_per_sec": tok_per_sec,
+                "gpu_memory_gb": gpu_mem,
+                "gpu_utilization": gpu_util,
+            },
+        )
+
+    def _generate_samples(self) -> None:
+        """Generate text samples to show training progress."""
+        if self.tokenizer is None:
+            return
+
+        try:
+            from eval.generation import generate_samples
+
+            logger.info("Step %d | Generating samples...", self.global_step)
+            results = generate_samples(
+                self._raw_model,
+                self.tokenizer,
+                prompts=self.sample_prompts,
+                seq_len=128,
+                sampling_steps=32,
+                temperature=0.8,
+                device=str(self.device),
+            )
+
+            for r in results:
+                prompt = r["prompt"]
+                generated = r["generated"]
+                # Truncate for logging
+                gen_short = generated[:200] + "..." if len(generated) > 200 else generated
+                logger.info("  Prompt: %s", prompt)
+                logger.info("  Output: %s", gen_short)
+
+                # Report to dashboard
+                if self.reporter:
+                    self.reporter.report_generation(
+                        step=self.global_step,
+                        text=generated,
+                        prompt=prompt,
+                    )
+
+            self.model.train()  # Back to training mode
+        except Exception as e:
+            logger.warning("Sample generation failed: %s", e)
 
     @torch.no_grad()
     def evaluate(self) -> float:

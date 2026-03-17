@@ -20,11 +20,20 @@ training:
   total_steps: 50000      # half steps × double batch = same data
   warmup_steps: 500       # proportionally shorter warmup
   compile: true
+  generate_every_steps: 2500    # more frequent samples in shorter run
 
   structural_warmup:
     gate_freeze_steps: 250        # scaled with total_steps
     gate_ramp_end_steps: 1000
     cluster_unfreeze_step: 250
+
+  # Enable meta-optimizer earlier in fast mode
+  meta:
+    enabled: true
+    enable_after_step: 25000    # halfway through fast run
+    meta_lr: 1.0e-4
+    update_every: 100
+    hidden_dim: 128
 
 data:
   num_workers: auto

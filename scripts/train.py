@@ -193,8 +193,21 @@ def main():
             pin_memory=True,
         )
 
+    # Load tokenizer for sample generation
+    tokenizer = None
+    tokenizer_path = data_cfg.get("tokenizer_path", "data/tokenizer.json")
+    if Path(tokenizer_path).exists():
+        try:
+            from data.tokenizer import load_tokenizer
+            tokenizer = load_tokenizer(tokenizer_path)
+            logging.info("Tokenizer loaded for sample generation")
+        except Exception as e:
+            logging.warning("Could not load tokenizer: %s", e)
+
     # Train
     trainer = Trainer(model, train_loader, val_loader, config)
+    if tokenizer:
+        trainer.set_tokenizer(tokenizer)
 
     if args.resume:
         from training.checkpointing import load_checkpoint
