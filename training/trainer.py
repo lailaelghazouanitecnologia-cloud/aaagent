@@ -481,19 +481,58 @@ class Trainer:
         except Exception:
             pass
 
-        # Get cluster health metrics
+        # Extract all structural metrics from cached routing info
         cluster_health = {}
         gate_metrics = {}
         hierarchy_metrics = {}
+        extra = {}
 
         if isinstance(self._raw_model.embedding, CompositeEmbedding):
             try:
+                from eval.cluster_health import full_cluster_health
+                from eval.hierarchy_metrics import coarse_fine_alignment
+
                 info = self._raw_model.embedding.get_routing_info()
-                gate_info = info.get("gate_value")
-                if gate_info is not None:
-                    gate_val = gate_info if isinstance(gate_info, (int, float)) else gate_info.mean().item()
-                    gate_std = 0.0 if isinstance(gate_info, (int, float)) else gate_info.std().item()
-                    gate_metrics = {"mean": gate_val, "std": gate_std}
+
+                # Gate stats (from cached forward pass)
+                gate_values = info.get("gate_values")
+                if gate_values is not None:
+                    gate_metrics = {
+                        "mean": gate_values.mean().item(),
+                        "std": gate_values.std().item(),
+                    }
+
+                # Cluster health (from cached routing weights)
+                fine_weights = info.get("fine_weights")
+                fine_centroids_mod = info.get("fine_centroids")
+                if fine_weights is not None and fine_centroids_mod is not None:
+                    health = full_cluster_health(fine_weights, fine_centroids_mod.centroids)
+                    cluster_health = {
+                        "entropy_ratio": health["entropy_ratio"],
+                        "dead_clusters": health["dead_clusters"],
+                        "centroid_similarity": health["mean_cosine"],
+                    }
+
+                # Hierarchy metrics
+                coarse_centroids_mod = info.get("coarse_centroids")
+                if fine_centroids_mod is not None and coarse_centroids_mod is not None:
+                    alignment = coarse_fine_alignment(
+                        fine_centroids_mod.centroids.detach(),
+                        coarse_centroids_mod.centroids.detach(),
+                    )
+                    hierarchy_metrics = {
+                        "coarse_fine_alignment": alignment["coherence"],
+                        "balance": alignment["balance_score"],
+                    }
+
+                # Extra: alpha, beta for tracking
+                alpha = info.get("alpha")
+                beta = info.get("beta")
+                if alpha is not None:
+                    extra["alpha"] = alpha.item()
+                if beta is not None:
+                    extra["beta"] = beta.item()
+
             except Exception:
                 pass
 
@@ -517,6 +556,7 @@ class Trainer:
                 "gpu_memory_gb": gpu_mem,
                 "gpu_utilization": gpu_util,
             },
+            extra=extra if extra else None,
         )
 
     def _generate_samples(self) -> None:
