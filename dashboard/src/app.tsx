@@ -7,6 +7,7 @@ import { GatePage } from "@/pages/gate";
 import { HierarchyPage } from "@/pages/hierarchy";
 import { GenerationPage } from "@/pages/generation";
 import { AblationsPage } from "@/pages/ablations";
+import { EvalsPage } from "@/pages/evals";
 
 export function App() {
   return (
@@ -18,6 +19,7 @@ export function App() {
         <Route path="/gate" element={<GatePage />} />
         <Route path="/hierarchy" element={<HierarchyPage />} />
         <Route path="/generation" element={<GenerationPage />} />
+        <Route path="/evals" element={<EvalsPage />} />
         <Route path="/ablations" element={<AblationsPage />} />
       </Route>
     </Routes>

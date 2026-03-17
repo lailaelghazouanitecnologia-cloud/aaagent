@@ -9,7 +9,13 @@ import {
   getLatestMetric,
   getRunSummary,
   getComparisonData,
+  insertEval,
+  getEvals,
+  getLatestEval,
+  getAllEvalRuns,
+  getEvalComparison,
   type MetricPayload,
+  type EvalPayload,
 } from "./db";
 
 const app = new Hono();
@@ -88,6 +94,43 @@ app.get("/api/compare", (c) => {
   const runs = c.req.query("runs")?.split(",") ?? [];
   if (runs.length === 0) return c.json({ error: "provide ?runs=a,b,c" }, 400);
   return c.json(getComparisonData(runs));
+});
+
+// --- Eval API Routes ---
+
+// Ingest eval results from the agent
+app.post("/api/evals", async (c) => {
+  const payload: EvalPayload = await c.req.json();
+  if (!payload.run || payload.step == null) {
+    return c.json({ error: "run and step are required" }, 400);
+  }
+  insertEval(payload);
+  broadcast({ type: "eval", data: payload });
+  return c.json({ ok: true });
+});
+
+// List runs that have eval data
+app.get("/api/evals/runs", (c) => {
+  return c.json(getAllEvalRuns());
+});
+
+// Get all evals for a run
+app.get("/api/evals/:run", (c) => {
+  const run = c.req.param("run");
+  return c.json(getEvals(run));
+});
+
+// Get latest eval for a run
+app.get("/api/evals/:run/latest", (c) => {
+  const run = c.req.param("run");
+  return c.json(getLatestEval(run));
+});
+
+// Compare evals across runs
+app.get("/api/evals/compare", (c) => {
+  const runs = c.req.query("runs")?.split(",") ?? [];
+  if (runs.length === 0) return c.json({ error: "provide ?runs=a,b,c" }, 400);
+  return c.json(getEvalComparison(runs));
 });
 
 // Health check

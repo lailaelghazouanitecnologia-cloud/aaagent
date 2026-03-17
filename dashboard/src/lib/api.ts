@@ -27,6 +27,28 @@ export async function fetchComparison(runs: string[]) {
   return res.json();
 }
 
+// --- Eval API ---
+
+export async function fetchEvalRuns(): Promise<string[]> {
+  const res = await fetch(`${BASE}/api/evals/runs`);
+  return res.json();
+}
+
+export async function fetchEvals(run: string) {
+  const res = await fetch(`${BASE}/api/evals/${encodeURIComponent(run)}`);
+  return res.json();
+}
+
+export async function fetchLatestEval(run: string) {
+  const res = await fetch(`${BASE}/api/evals/${encodeURIComponent(run)}/latest`);
+  return res.json();
+}
+
+export async function fetchEvalComparison(runs: string[]) {
+  const res = await fetch(`${BASE}/api/evals/compare?runs=${runs.join(",")}`);
+  return res.json();
+}
+
 // WebSocket for real-time updates
 export function connectWS(onMessage: (data: any) => void): WebSocket {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";

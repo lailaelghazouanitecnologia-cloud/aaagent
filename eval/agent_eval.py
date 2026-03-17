@@ -215,47 +215,67 @@ def run_evaluation(
 def _report_to_dashboard(
     report: dict, url: str, run: str, step: int
 ) -> None:
-    """Send evaluation summary to the HCLM-D dashboard."""
-    from training.dashboard_reporter import DashboardReporter
+    """Send evaluation results to the HCLM-D dashboard via /api/evals."""
+    import requests as req
 
-    reporter = DashboardReporter(run=run, url=url, batch_size=1)
-    if not reporter._enabled:
-        logger.warning("Dashboard not reachable, skipping report")
+    api_url = url.rstrip("/") + "/api/evals"
+
+    # Test connectivity
+    try:
+        health = req.get(url.rstrip("/") + "/api/health", timeout=3)
+        if not health.ok:
+            logger.warning(f"Dashboard returned {health.status_code}, skipping")
+            return
+    except req.ConnectionError:
+        logger.warning(f"Dashboard not reachable at {url}, skipping")
         return
 
     auto = report["auto_metrics"]
-    llm = report["llm_judge"]
+    llm = report.get("llm_judge", {})
+    vocab = auto.get("vocab", {})
 
-    reporter.report(
-        step=step,
-        extra={
-            "eval_auto": {
-                "distinct_1": auto["mean_distinct_1"],
-                "distinct_2": auto["mean_distinct_2"],
-                "repetition": auto["mean_repetition_ratio"],
-                "self_bleu_4": auto["self_bleu_4"],
-                "keyword_hit": auto["mean_keyword_hit"],
-                "vocab_richness": auto["mean_vocab_richness"],
-            },
-            "eval_llm": {
-                k: v for k, v in llm.items()
-                if k not in ("failure_modes",) and not isinstance(v, dict)
-            } if not llm.get("skipped") else {"skipped": True},
-            "eval_type": "bench_30",
+    payload = {
+        "run": run,
+        "step": step,
+        "eval_type": "bench_30",
+        "auto_metrics": {
+            "distinct_1": auto.get("mean_distinct_1"),
+            "distinct_2": auto.get("mean_distinct_2"),
+            "distinct_3": auto.get("mean_distinct_3"),
+            "repetition_ratio": auto.get("mean_repetition_ratio"),
+            "self_bleu_4": auto.get("self_bleu_4"),
+            "keyword_hit": auto.get("mean_keyword_hit"),
+            "vocab_richness": auto.get("mean_vocab_richness"),
+            "length_compliance": auto.get("mean_length_compliance"),
+            "banned_violations": auto.get("total_banned_violations"),
+            "total_tokens": vocab.get("total_tokens"),
+            "unique_tokens": vocab.get("unique_tokens"),
         },
-    )
+        "samples": report.get("samples"),
+        "by_category": auto.get("by_category"),
+        "generation_time_s": auto.get("generation_time_s"),
+    }
 
-    # Report individual samples for the generation page
-    for s in report["samples"][:5]:  # Top 5 samples
-        reporter.report_generation(
-            step=step,
-            text=s["generated"],
-            prompt=s["prompt"],
-            metrics=s["metrics"],
-        )
+    # Add LLM judge if available
+    if not llm.get("skipped"):
+        payload["llm_judge"] = {
+            "mean_coherence": llm.get("mean_coherence"),
+            "mean_grammar": llm.get("mean_grammar"),
+            "mean_relevance": llm.get("mean_relevance"),
+            "mean_creativity": llm.get("mean_creativity"),
+            "mean_fluency": llm.get("mean_fluency"),
+            "mean_completeness": llm.get("mean_completeness"),
+            "overall_quality": llm.get("overall_quality"),
+            "mean_repetition_score": llm.get("mean_repetition_score"),
+            "failure_modes": llm.get("failure_modes"),
+        }
 
-    reporter.close()
-    logger.info("Eval metrics sent to dashboard")
+    try:
+        resp = req.post(api_url, json=payload, timeout=10)
+        resp.raise_for_status()
+        logger.info("Eval results sent to dashboard")
+    except Exception as e:
+        logger.warning(f"Failed to send eval to dashboard: {e}")
 
 
 # ---------------------------------------------------------------------------

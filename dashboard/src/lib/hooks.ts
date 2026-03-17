@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { fetchRuns, fetchMetrics, connectWS } from "./api";
+import { fetchRuns, fetchMetrics, connectWS, fetchEvalRuns, fetchEvals } from "./api";
 
 export function useRuns() {
   const [runs, setRuns] = useState<string[]>([]);
@@ -54,4 +54,34 @@ export function useRealtimeMetrics(run: string | null) {
   }, [run]);
 
   return data;
+}
+
+export function useEvalRuns() {
+  const [runs, setRuns] = useState<string[]>([]);
+  useEffect(() => {
+    fetchEvalRuns().then(setRuns).catch(() => {});
+  }, []);
+  return runs;
+}
+
+export function useEvals(run: string | null) {
+  const [data, setData] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!run) return;
+    setLoading(true);
+    try {
+      const evals = await fetchEvals(run);
+      setData(evals);
+    } finally {
+      setLoading(false);
+    }
+  }, [run]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return { data, loading, reload: load };
 }

@@ -9,6 +9,7 @@ const navItems = [
   { to: "/gate", label: "Gate", icon: "⊞" },
   { to: "/hierarchy", label: "Hierarchy", icon: "⊟" },
   { to: "/generation", label: "Generation", icon: "✦" },
+  { to: "/evals", label: "Evals", icon: "⬡" },
   { to: "/ablations", label: "Ablations", icon: "⊕" },
 ];
 
