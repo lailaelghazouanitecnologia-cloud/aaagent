@@ -1,0 +1,52 @@
+# v4 — hier-boost: Full hierarchy + proposals A+B+D
+# Temperature annealing, loss curriculum, staggered coarse unfreeze.
+# This is the "after" version — the hierarchy with real incentive.
+# Compare v4 vs v3 to measure boost. Compare v4 vs v1 to measure total value.
+# z86 train --config configs/versions/v4_hier_boost.yaml
+
+_base_: "../base.yaml"
+
+version:
+  tag: "hier-boost"
+  note: "Hierarchy + temp annealing (A) + loss curriculum (B) + staggered coarse (D)"
+
+model:
+  embedding:
+    type: "hierarchical"
+    fine_clusters: 64
+    coarse_clusters: 8
+    gate_min: 0.1
+    alpha_init: 0.1
+    beta_init: 0.05
+    use_gate: true
+    use_hierarchy: true
+
+losses:
+  lambda_balance: 0.01
+  lambda_diversity: 0.001
+  lambda_hierarchy: 0.01
+
+training:
+  structural_warmup:
+    gate_freeze_steps: 500
+    gate_ramp_end_steps: 2000
+    cluster_unfreeze_step: 500
+    coarse_unfreeze_step: 3000        # Proposal D: staggered
+
+    # Proposal A: temperature annealing
+    temp_anneal_start: 2000
+    temp_anneal_end: 20000
+    temp_start: 1.0
+    temp_end: 0.3
+
+    # Proposal B: loss curriculum
+    loss_ramp_start: 2000
+    loss_ramp_end: 20000
+    loss_multiplier_min: 0.1
+    loss_multiplier_hierarchy_max: 10.0   # effective: 0.01 × 10 = 0.1
+    loss_multiplier_balance_max: 5.0      # effective: 0.01 × 5 = 0.05
+    loss_multiplier_diversity_max: 10.0   # effective: 0.001 × 10 = 0.01
+
+wandb:
+  run_name: "v4-hier-boost"
+  tags: ["version", "hierarchy", "temp-annealing", "loss-curriculum", "staggered-coarse"]

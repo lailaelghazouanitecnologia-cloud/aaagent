@@ -92,9 +92,10 @@ def build_parser() -> argparse.ArgumentParser:
     serve_p.add_argument("--port", type=int, default=8080)
 
     # ── ablation ──
-    abl_p = sub.add_parser("ablation", help="Ablation studies")
-    abl_p.add_argument("sub", choices=["run", "status", "compare"], help="Subcommand")
-    abl_p.add_argument("--only", nargs="*", default=None, help="Only run specific ablations")
+    abl_p = sub.add_parser("ablation", help="Ablation studies and version comparisons")
+    abl_p.add_argument("sub", choices=["run", "status", "compare", "matrix"], help="Subcommand")
+    abl_p.add_argument("--only", nargs="*", default=None, help="Only run specific ablations/versions")
+    abl_p.add_argument("--versions", action="store_true", help="Use version configs instead of ablations")
 
     # ── dashboard ──
     dash_p = sub.add_parser("dashboard", help="Start monitoring dashboard")

@@ -1,0 +1,39 @@
+# v0 — flat-AR: Autoregressive baseline (no diffusion, no structure)
+# Standard left-to-right LM. The "classic" reference.
+# z86 train --config configs/versions/v0_flat_ar.yaml
+
+_base_: "../base.yaml"
+
+version:
+  tag: "flat-AR"
+  note: "Autoregressive baseline — causal attention, no clusters"
+
+model:
+  embedding:
+    type: "flat"
+    use_gate: false
+    use_hierarchy: false
+    fine_clusters: 0
+    coarse_clusters: 0
+
+  transformer:
+    causal: true
+
+diffusion:
+  mask_schedule: "none"
+
+losses:
+  lambda_balance: 0.0
+  lambda_diversity: 0.0
+  lambda_hierarchy: 0.0
+
+training:
+  structural_warmup:
+    gate_freeze_steps: 0
+    gate_ramp_end_steps: 0
+    cluster_unfreeze_step: 0
+    coarse_unfreeze_step: 0
+
+wandb:
+  run_name: "v0-flat-AR"
+  tags: ["version", "flat", "autoregressive", "baseline"]

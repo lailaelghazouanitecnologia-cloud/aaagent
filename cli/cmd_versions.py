@@ -34,7 +34,7 @@ def cmd_versions(args):
 
     best = reg.best()
 
-    headers = ["VERSION", "STEP", "LOSS", "PPL", "ENTROPY", "RUN", "SIZE", "DATE"]
+    headers = ["VERSION", "TAG", "STEP", "LOSS", "PPL", "ENTROPY", "NOTE", "DATE"]
     rows = []
     for v in versions:
         is_best = best and v.id == best.id
@@ -43,18 +43,22 @@ def cmd_versions(args):
         if is_best:
             vid += f" {ui.C.GREEN}★{ui.C.RST}"
 
+        tag_str = f"{ui.C.CYAN}{v.tag}{ui.C.RST}" if v.tag else f"{ui.C.GRAY}—{ui.C.RST}"
         loss_str = f"{v.loss:.4f}" if v.loss is not None else "—"
         ppl_str = f"{v.ppl:.2f}" if v.ppl is not None else "—"
         ent_str = f"{v.entropy:.3f}" if v.entropy is not None else "—"
-        size_str = f"{v.size_mb:.0f}MB"
+        note_str = v.note[:20] if v.note else "—"
         date_str = v.created[:10] if v.created else "—"
 
-        rows.append([vid, str(v.step), loss_str, ppl_str, ent_str, v.run, size_str, date_str])
+        rows.append([vid, tag_str, str(v.step), loss_str, ppl_str, ent_str, note_str, date_str])
 
     if args.detail:
         # Extended info
         for v in versions:
-            ui.header(f"{v.id} — step {v.step}")
+            tag_display = f" [{v.tag}]" if v.tag else ""
+            ui.header(f"{v.id}{tag_display} — step {v.step}")
+            if v.tag:
+                ui.kv("Tag", v.tag)
             ui.kv("Path", v.path)
             ui.kv("Run", v.run)
             ui.kv("Config", v.config)
@@ -89,7 +93,9 @@ def cmd_diff(args):
         ui.err(f"Version not found: {args.version_b}")
         return 1
 
-    ui.header(f"Comparing {a.id} vs {b.id}")
+    label_a = f"{a.id} [{a.tag}]" if a.tag else a.id
+    label_b = f"{b.id} [{b.tag}]" if b.tag else b.id
+    ui.header(f"Comparing {label_a} vs {label_b}")
 
     metrics = [
         ("Step", a.step, b.step, False, "{:,}"),
@@ -170,13 +176,16 @@ def _scan_and_register(reg: Registry) -> int:
         ui.info(f"  {p.name} — step {step_num}, {size:.0f}MB")
 
         if ui.confirm(f"Register as {reg.next_id()}?"):
+            # Try to derive tag from filename
+            tag = p.stem.replace("step_", "").replace("_", "-")
             v = reg.register(
                 step=step_num,
                 path=str(p),
                 run="unknown",
                 config="configs/base.yaml",
+                tag=tag,
                 note="scanned",
             )
-            ui.ok(f"Registered as {v.id}")
+            ui.ok(f"Registered as {v.id} (tag: {v.tag})")
 
     return 0

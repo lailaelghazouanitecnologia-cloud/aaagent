@@ -1,0 +1,50 @@
+# v3 — hier-naive: Full hierarchy with ORIGINAL static lambdas
+# This is the "before" version — hierarchy enabled but with the
+# weak static lambdas (0.01/0.001) that produced H_router ≈ 5.93.
+# Serves as control to measure if proposals A+B+D actually help.
+# z86 train --config configs/versions/v3_hier_naive.yaml
+
+_base_: "../base.yaml"
+
+version:
+  tag: "hier-naive"
+  note: "Full hierarchy, static lambdas, no temp annealing — original weak setup"
+
+model:
+  embedding:
+    type: "hierarchical"
+    fine_clusters: 64
+    coarse_clusters: 8
+    gate_min: 0.1
+    alpha_init: 0.1
+    beta_init: 0.05
+    use_gate: true
+    use_hierarchy: true
+
+losses:
+  lambda_balance: 0.01
+  lambda_diversity: 0.001
+  lambda_hierarchy: 0.01
+
+training:
+  structural_warmup:
+    gate_freeze_steps: 500
+    gate_ramp_end_steps: 2000
+    cluster_unfreeze_step: 500
+    coarse_unfreeze_step: 500       # same as fine (no stagger)
+    # No temperature annealing
+    temp_anneal_start: 999999
+    temp_anneal_end: 999999
+    temp_start: 1.0
+    temp_end: 1.0
+    # No loss curriculum
+    loss_ramp_start: 0
+    loss_ramp_end: 0
+    loss_multiplier_min: 1.0
+    loss_multiplier_hierarchy_max: 1.0
+    loss_multiplier_balance_max: 1.0
+    loss_multiplier_diversity_max: 1.0
+
+wandb:
+  run_name: "v3-hier-naive"
+  tags: ["version", "hierarchy", "naive", "static-lambdas"]

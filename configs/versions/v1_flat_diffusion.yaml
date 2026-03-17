@@ -1,0 +1,34 @@
+# v1 — flat-diff: Masked diffusion WITHOUT structure
+# Same architecture but bidirectional + MDM objective.
+# Proves diffusion works independently of clustering.
+# z86 train --config configs/versions/v1_flat_diffusion.yaml
+
+_base_: "../base.yaml"
+
+version:
+  tag: "flat-diff"
+  note: "Masked diffusion, flat embedding, no clusters"
+
+model:
+  embedding:
+    type: "flat"
+    use_gate: false
+    use_hierarchy: false
+    fine_clusters: 0
+    coarse_clusters: 0
+
+losses:
+  lambda_balance: 0.0
+  lambda_diversity: 0.0
+  lambda_hierarchy: 0.0
+
+training:
+  structural_warmup:
+    gate_freeze_steps: 0
+    gate_ramp_end_steps: 0
+    cluster_unfreeze_step: 0
+    coarse_unfreeze_step: 0
+
+wandb:
+  run_name: "v1-flat-diff"
+  tags: ["version", "flat", "diffusion"]

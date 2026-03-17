@@ -22,6 +22,7 @@ class Version:
     path: str                   # relative to project root
     run: str                    # run name
     config: str                 # config file used
+    tag: str = ""               # short identifier, e.g. "flat-AR", "hier-boost"
     loss: float | None = None
     ppl: float | None = None
     entropy: float | None = None
@@ -70,11 +71,12 @@ class Registry:
         return f"v{max(nums, default=0) + 1}"
 
     def get(self, version_id: str) -> Version | None:
-        """Get version by id."""
+        """Get version by id or tag."""
         for v in self.versions:
             if v.id == version_id:
                 return v
-        return None
+        # Fallback: try matching by tag
+        return self.find_by_tag(version_id)
 
     def latest(self) -> Version | None:
         """Get the most recent version."""
@@ -92,12 +94,21 @@ class Registry:
     def list_all(self) -> list[Version]:
         return list(self.versions)
 
+    def find_by_tag(self, tag: str) -> Version | None:
+        """Find first version matching a tag (case-insensitive)."""
+        tag_lower = tag.lower()
+        for v in self.versions:
+            if v.tag.lower() == tag_lower:
+                return v
+        return None
+
     def register(
         self,
         step: int,
         path: str,
         run: str,
         config: str,
+        tag: str = "",
         loss: float | None = None,
         ppl: float | None = None,
         entropy: float | None = None,
@@ -118,6 +129,7 @@ class Registry:
             path=path,
             run=run,
             config=config,
+            tag=tag,
             loss=loss,
             ppl=ppl,
             entropy=entropy,

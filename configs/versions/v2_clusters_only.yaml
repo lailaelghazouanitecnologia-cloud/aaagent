@@ -1,0 +1,30 @@
+# v2 — clust-only: Fine clusters + gate, NO hierarchy
+# Tests if 64 fine clusters add value over flat embedding.
+# If v2 > v1: clusters help. If v2 ≈ v1: clusters are noise.
+# z86 train --config configs/versions/v2_clusters_only.yaml
+
+_base_: "../base.yaml"
+
+version:
+  tag: "clust-only"
+  note: "Fine clusters (K=64) + gate, no coarse hierarchy"
+
+model:
+  embedding:
+    type: "hierarchical"
+    fine_clusters: 64
+    coarse_clusters: 0
+    use_gate: true
+    use_hierarchy: false
+    beta_init: 0.0
+
+losses:
+  lambda_hierarchy: 0.0
+
+training:
+  structural_warmup:
+    coarse_unfreeze_step: 999999  # never unfreeze coarse (doesn't exist)
+
+wandb:
+  run_name: "v2-clust-only"
+  tags: ["version", "clusters", "no-hierarchy"]
