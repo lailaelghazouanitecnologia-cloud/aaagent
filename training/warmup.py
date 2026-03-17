@@ -44,9 +44,8 @@ class StructuralWarmup:
             progress = (step - self.gate_freeze_steps) / max(
                 self.gate_ramp_end_steps - self.gate_freeze_steps, 1
             )
-            # Return a ramp value that approaches None (learned)
-            # We use a value that linearly approaches 1.0, then switch to learned
-            return None if progress > 0.99 else progress
+            # Ramp from 0 → 1 linearly; at 1.0 switch to learned gate
+            return None if progress >= 1.0 else progress
         else:
             # Phase 2+: Use learned gate
             return None

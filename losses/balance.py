@@ -28,6 +28,7 @@ def balance_loss(routing_weights: torch.Tensor) -> torch.Tensor:
     uniform = torch.ones_like(avg_probs) / K
 
     # KL divergence from uniform (penalizes deviation from even usage)
-    loss = torch.sum(avg_probs * (avg_probs.log() - uniform.log()))
+    eps = 1e-10
+    loss = torch.sum(avg_probs * (torch.log(avg_probs + eps) - torch.log(uniform + eps)))
 
     return loss

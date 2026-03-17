@@ -48,7 +48,7 @@ class HCLMDataset(Dataset):
         return len(self.sequences)
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        input_ids = self.sequences[idx].clone()
+        input_ids = self.sequences[idx]
         attention_mask = (input_ids != PAD_TOKEN_ID).long()
 
         # Apply diffusion masking

@@ -12,6 +12,7 @@ Includes:
 from __future__ import annotations
 
 import logging
+import math
 import os
 import time
 from pathlib import Path
@@ -436,9 +437,10 @@ class Trainer:
                 if fine_weights is not None:
                     # H = -sum(p * log(p)), max = log2(K)
                     eps = 1e-8
-                    entropy = -(fine_weights * (fine_weights + eps).log2()).sum(dim=-1).mean()
-                    max_entropy = torch.tensor(fine_weights.shape[-1], dtype=torch.float32).log2()
-                    parts.append(f"H_router: {entropy.item():.2f}/{max_entropy.item():.2f}")
+                    with torch.no_grad():
+                        entropy = -(fine_weights * (fine_weights + eps).log2()).sum(dim=-1).mean()
+                    max_entropy = math.log2(fine_weights.shape[-1])
+                    parts.append(f"H_router: {entropy.item():.2f}/{max_entropy:.2f}")
 
                 if parts:
                     cluster_info = " | " + " | ".join(parts)
@@ -470,16 +472,11 @@ class Trainer:
 
         gpu_mem = torch.cuda.memory_allocated() / 1e9 if self.device.type == "cuda" else 0
         gpu_util = 0.0
-        try:
-            import subprocess
-            result = subprocess.run(
-                ["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"],
-                capture_output=True, text=True, timeout=2,
-            )
-            if result.returncode == 0:
-                gpu_util = float(result.stdout.strip().split("\n")[0]) / 100.0
-        except Exception:
-            pass
+        if self.device.type == "cuda":
+            try:
+                gpu_util = torch.cuda.utilization(0) / 100.0
+            except Exception:
+                pass
 
         # Extract all structural metrics from cached routing info
         cluster_health = {}
