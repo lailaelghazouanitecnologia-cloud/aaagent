@@ -102,8 +102,21 @@ def tokenize_corpus(
 
 
 def prepare_data(config: dict) -> None:
-    """Full data preparation pipeline: download, tokenize, and build tokenizer."""
+    """Full data preparation pipeline: download, tokenize, and build tokenizer.
+
+    Detects dataset type from config and routes to the appropriate pipeline:
+    - "tinystories": Original English-only TinyStories
+    - "multilingual": English + Spanish + Python mixed corpus
+    """
     data_cfg = config.get("data", {})
+    dataset_type = data_cfg.get("dataset", "tinystories")
+
+    if dataset_type == "multilingual":
+        from data.prep_multilingual import prepare_multilingual
+        prepare_multilingual(config)
+        return
+
+    # Default: TinyStories pipeline
     data_dir = data_cfg.get("data_dir", "data/tinystories")
     tokenizer_path = data_cfg.get("tokenizer_path", "data/tokenizer.json")
     vocab_size = config.get("model", {}).get("vocab_size", 8192)

@@ -1,0 +1,120 @@
+# HCLM-D Multilingual Config — English + Spanish + Python
+# 20M model, 50M tokens, vocab 32k
+# Domain ratio: 25% EN / 25% ES / 50% Python
+
+model:
+  vocab_size: 32768           # 4x base — covers EN/ES/Python tokens
+  embed_dim: 384
+  max_seq_len: 512
+  mask_token_id: 0
+
+  embedding:
+    type: "hierarchical"
+    fine_clusters: 128        # 2x base — more clusters for 3 domains
+    coarse_clusters: 16       # 2x base — EN, ES, Python + subtypes
+    gate_min: 0.1
+    alpha_init: 0.1
+    beta_init: 0.05
+    use_gate: true
+    use_hierarchy: true
+
+  transformer:
+    n_layers: 8
+    n_heads: 6
+    d_ff: 1536
+    dropout: 0.1
+    activation: "swiglu"
+    norm: "rmsnorm"
+    causal: false
+
+  head:
+    tie_weights: true
+
+diffusion:
+  mask_schedule: "uniform"
+  min_mask_ratio: 0.0
+  max_mask_ratio: 1.0
+  sampling_steps: 64
+  remasking_strategy: "low_confidence"
+  temperature: 1.0
+  top_k: 0
+  top_p: 1.0
+
+losses:
+  lambda_balance: 0.01
+  lambda_diversity: 0.001
+  lambda_hierarchy: 0.01
+
+training:
+  optimizer: "adamw"
+  lr: 3.0e-4
+  weight_decay: 0.1
+  betas: [0.9, 0.95]
+  eps: 1.0e-8
+  grad_clip: 1.0
+
+  warmup_steps: 500
+  lr_schedule: "cosine"
+  total_steps: 50000          # 50M tokens / 32K tokens per batch ≈ 1500 steps, but extra for convergence
+
+  structural_warmup:
+    gate_freeze_steps: 250
+    gate_ramp_end_steps: 1000
+    cluster_unfreeze_step: 250
+
+  batch_size: 64
+  seq_len: 512
+  gradient_accumulation: 1
+
+  compile: true
+  dtype: "bfloat16"
+
+  checkpoint_dir: "checkpoints"
+  save_every_steps: 5000
+  eval_every_steps: 500
+  log_every_steps: 50
+  generate_every_steps: 2500
+
+  sample_prompts:
+    - "Once upon a time"
+    - "Había una vez un"
+    - "def calculate_"
+    - "The function takes"
+    - "Esta clase implementa"
+    - "import torch\n\nclass Model"
+
+  meta:
+    enabled: false
+
+data:
+  dataset: "multilingual"     # Triggers multilingual pipeline
+  data_dir: "data/multilingual"
+  tokenizer_path: "data/tokenizer_multilingual.json"
+  total_tokens: 50000000      # 50M tokens total
+  domain_ratios:
+    en: 0.25                  # 12.5M tokens English
+    es: 0.25                  # 12.5M tokens Spanish
+    python: 0.50              # 25M tokens Python code
+  num_workers: auto
+  prefetch_factor: 2
+
+wandb:
+  project: "hclm-d"
+  entity: null
+  run_name: "multilingual-en-es-py"
+  tags: ["multilingual", "english", "spanish", "python", "diffusion"]
+
+# ── Cloud providers ──
+cloud:
+  runpod:
+    default_preset: "train-fast"
+    auto_stop_after_training: true
+  cloudflare:
+    domain: "z86.dev"
+    proxied: true
+  groq:
+    model: "llama-3.3-70b-versatile"
+    max_retries: 3
+    delay_between_calls: 0.5
+
+seed: 42
