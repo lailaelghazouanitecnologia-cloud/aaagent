@@ -106,6 +106,7 @@ class CompositeEmbedding(nn.Module):
         self._cached_fine_weights: torch.Tensor | None = None
         self._cached_coarse_weights: torch.Tensor | None = None
         self._cached_gate_values: torch.Tensor | None = None
+        self._live_coarse_weights: torch.Tensor | None = None
 
     @property
     def weight(self) -> torch.Tensor:
@@ -116,6 +117,7 @@ class CompositeEmbedding(nn.Module):
         x: torch.Tensor,
         gate_scale: torch.Tensor | None = None,
         router_temperature: torch.Tensor | None = None,
+        coarse_temperature: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Compute composite embedding.
 
@@ -123,8 +125,12 @@ class CompositeEmbedding(nn.Module):
             x: Token IDs, shape [batch_size, seq_len].
             gate_scale: Scalar tensor in [0, 1] that scales the learned gate.
                         Passed as a tensor to avoid torch.compile recompilation.
-            router_temperature: Scalar tensor for softmax temperature.
+            router_temperature: Scalar tensor for fine router softmax temperature.
                                 Passed as a tensor to avoid torch.compile recompilation.
+            coarse_temperature: Scalar tensor for coarse router softmax temperature.
+                                If None, uses router_temperature. Coarse routing
+                                benefits from a sharper (lower) temperature since
+                                it has fewer clusters (M << K).
 
         Returns:
             Composite embeddings, shape [batch_size, seq_len, embed_dim].
@@ -139,12 +145,16 @@ class CompositeEmbedding(nn.Module):
 
         # Coarse (hierarchical) cluster assignment — bottom-up from fine
         if self.use_hierarchy and self.coarse_router is not None:
-            coarse_weights = self.coarse_router(e_cluster, temperature=router_temperature)  # [..., M]
+            c_temp = coarse_temperature if coarse_temperature is not None else router_temperature
+            coarse_weights = self.coarse_router(e_cluster, temperature=c_temp)  # [..., M]
             e_hier = self.coarse_centroids(coarse_weights)  # [..., D]
+            # Cache detached copy for monitoring; keep live for loss gradient
             self._cached_coarse_weights = coarse_weights.detach()
+            self._live_coarse_weights = coarse_weights  # live for hierarchy_loss
         else:
             e_hier = torch.zeros_like(e_local)
             self._cached_coarse_weights = None
+            self._live_coarse_weights = None
 
         # Structural component
         structural = self.alpha * e_cluster + self.beta * e_hier
@@ -178,6 +188,8 @@ class CompositeEmbedding(nn.Module):
             # Cached tensors from last forward pass (detached)
             "fine_weights": self._cached_fine_weights,
             "coarse_weights": self._cached_coarse_weights,
+            # Live (non-detached) coarse weights for hierarchy_loss gradient
+            "coarse_weights_live": getattr(self, "_live_coarse_weights", None),
             "gate_values": self._cached_gate_values,
         }
         if self.gate is not None:

@@ -113,6 +113,7 @@ class Trainer:
             temp_anneal_end=sw_cfg.get("temp_anneal_end", 20000),
             temp_start=sw_cfg.get("temp_start", 1.0),
             temp_end=sw_cfg.get("temp_end", 0.3),
+            coarse_temp_ratio=sw_cfg.get("coarse_temp_ratio", 0.6),
             loss_ramp_start=sw_cfg.get("loss_ramp_start", 2000),
             loss_ramp_end=sw_cfg.get("loss_ramp_end", 20000),
             loss_multiplier_min=sw_cfg.get("loss_multiplier_min", 0.1),
@@ -328,6 +329,8 @@ class Trainer:
         router_temp_value = self.warmup.get_router_temperature(self.global_step)
         loss_multipliers = self.warmup.get_loss_multipliers(self.global_step)
 
+        coarse_temp_value = self.warmup.get_coarse_temperature(self.global_step)
+
         # Convert to tensors to avoid torch.compile recompilation guards.
         # Python floats cause dynamo to guard on the exact literal value,
         # triggering a recompile every step during warmup ramp.
@@ -341,6 +344,11 @@ class Trainer:
             if router_temp_value != 1.0
             else None
         )
+        coarse_temp = (
+            torch.tensor(coarse_temp_value, device=self.device, dtype=torch.float32)
+            if coarse_temp_value != 1.0
+            else None
+        )
 
         # Freeze/unfreeze clusters based on warmup schedule
         self.warmup.apply_freezing(self.model, self.global_step)
@@ -351,6 +359,7 @@ class Trainer:
                 masked_ids, attention_mask,
                 gate_scale=gate_scale,
                 router_temperature=router_temp,
+                coarse_temperature=coarse_temp,
             )
 
             # Get routing info for auxiliary losses
@@ -358,6 +367,7 @@ class Trainer:
             coarse_centroids = None
             routing_weights = None
             fine_to_coarse_weights = None
+            coarse_routing_weights = None
 
             if isinstance(self.model.embedding, CompositeEmbedding):
                 info = self.model.embedding.get_routing_info()
@@ -369,20 +379,25 @@ class Trainer:
                     coarse_centroids = coarse_centroids_mod.centroids
                 # Cached routing weights from forward pass
                 routing_weights = info.get("fine_weights")
-                fine_to_coarse_weights = info.get("coarse_weights")
+                # Use LIVE (non-detached) coarse weights so hierarchy_loss
+                # gradient flows back through the coarse router
+                coarse_weights_live = info.get("coarse_weights_live")
+                fine_to_coarse_weights = coarse_weights_live if coarse_weights_live is not None else info.get("coarse_weights")
                 # For hierarchy loss: we need [K, M] mapping (average coarse
                 # assignment per fine cluster). Approximate from batch data.
                 if (
                     routing_weights is not None
                     and fine_to_coarse_weights is not None
                 ):
-                    # routing_weights: [B, S, K], fine_to_coarse_weights: [B, S, M]
+                    # routing_weights: [B, S, K] (detached), fine_to_coarse_weights: [B, S, M] (live)
                     # Compute: for each fine cluster k, average coarse assignment
                     # fine_to_coarse: [K, M] = (routing^T @ coarse) / routing.sum
                     rw_flat = routing_weights.reshape(-1, routing_weights.shape[-1])  # [N, K]
                     cw_flat = fine_to_coarse_weights.reshape(-1, fine_to_coarse_weights.shape[-1])  # [N, M]
                     fine_to_coarse_weights = torch.matmul(rw_flat.T, cw_flat)  # [K, M]
                     fine_to_coarse_weights = fine_to_coarse_weights / (rw_flat.sum(dim=0, keepdim=True).T + 1e-8)
+                # Coarse routing weights for balance loss
+                coarse_routing_weights = info.get("coarse_weights")
 
             loss_output = self.criterion(
                 logits=logits,
@@ -392,6 +407,7 @@ class Trainer:
                 fine_centroids=fine_centroids,
                 coarse_centroids=coarse_centroids,
                 fine_to_coarse_weights=fine_to_coarse_weights,
+                coarse_routing_weights=coarse_routing_weights,
                 loss_multipliers=loss_multipliers,
             )
 
@@ -486,12 +502,23 @@ class Trainer:
                     with torch.no_grad():
                         entropy = -(fine_weights * (fine_weights + eps).log2()).sum(dim=-1).mean()
                     max_entropy = math.log2(fine_weights.shape[-1])
-                    parts.append(f"H_router: {entropy.item():.2f}/{max_entropy:.2f}")
+                    parts.append(f"H_fine: {entropy.item():.2f}/{max_entropy:.2f}")
+
+                # Coarse router entropy
+                coarse_weights = info.get("coarse_weights")
+                if coarse_weights is not None:
+                    eps = 1e-8
+                    with torch.no_grad():
+                        c_entropy = -(coarse_weights * (coarse_weights + eps).log2()).sum(dim=-1).mean()
+                    c_max_entropy = math.log2(coarse_weights.shape[-1])
+                    parts.append(f"H_coarse: {c_entropy.item():.2f}/{c_max_entropy:.2f}")
 
                 # Temperature and phase info
                 temp = self.warmup.get_router_temperature(self.global_step)
+                c_temp = self.warmup.get_coarse_temperature(self.global_step)
                 phase = self.warmup.get_phase(self.global_step)
-                parts.append(f"τ: {temp:.2f}")
+                parts.append(f"t_f: {temp:.2f}")
+                parts.append(f"t_c: {c_temp:.2f}")
                 parts.append(f"phase: {phase}")
 
                 if parts:

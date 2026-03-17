@@ -63,6 +63,9 @@ class CombinedLossV6:
 
     def __init__(
         self,
+        # Model info (optional, for compatibility)
+        vocab_size: int = 0,
+        embed_dim: int = 384,
         # v4 lambdas
         lambda_balance: float = 0.01,
         lambda_diversity: float = 0.001,
@@ -75,6 +78,8 @@ class CombinedLossV6:
         lambda_template: float = 0.1,
         lambda_hash: float = 0.01,
     ):
+        self.vocab_size = vocab_size
+        self.embed_dim = embed_dim
         self.lambda_balance = lambda_balance
         self.lambda_diversity = lambda_diversity
         self.lambda_hierarchy = lambda_hierarchy
@@ -101,6 +106,9 @@ class CombinedLossV6:
         slot_positions: Optional[torch.Tensor] = None,
         block_mask: Optional[torch.Tensor] = None,
         block_boundaries: Optional[torch.Tensor] = None,
+        # Block boundary prediction (v6)
+        boundary_logits: Optional[torch.Tensor] = None,
+        boundary_labels: Optional[torch.Tensor] = None,
         # Plan/VM info (v6)
         plan_success_logits: Optional[torch.Tensor] = None,
         plan_success_labels: Optional[torch.Tensor] = None,
@@ -113,7 +121,7 @@ class CombinedLossV6:
         compose_targets: Optional[torch.Tensor] = None,
         # Phase control
         active_phase: int = 0,
-    ) -> V6LossOutput:
+    ) -> tuple[torch.Tensor, dict[str, float]]:
         """Compute combined v6 loss.
 
         Active losses depend on training phase:
@@ -158,9 +166,28 @@ class CombinedLossV6:
         if active_phase >= 2:
             if slot_mask is not None and slot_positions is not None:
                 l_slot = slot_loss(logits, targets, slot_mask, slot_positions)
+            elif slot_mask is not None:
+                # Use class-based SlotLoss when only slot_mask provided
+                from losses.slot_loss import SlotLoss
+                _sl = SlotLoss()
+                l_slot = _sl(logits, targets, mask, slot_mask)
 
             if block_mask is not None and block_boundaries is not None:
                 l_block = block_loss(logits, targets, block_mask, block_boundaries)
+            elif boundary_logits is not None and boundary_labels is not None:
+                from losses.block_loss import BlockLoss
+                _bl = BlockLoss()
+                l_block = _bl(boundary_logits, boundary_labels)
+
+        # Also handle boundary prediction outside phase gate for simple usage
+        if active_phase < 2 and boundary_logits is not None and boundary_labels is not None:
+            from losses.block_loss import BlockLoss
+            _bl = BlockLoss()
+            l_block = _bl(boundary_logits, boundary_labels)
+        if active_phase < 2 and slot_mask is not None:
+            from losses.slot_loss import SlotLoss
+            _sl = SlotLoss()
+            l_slot = _sl(logits, targets, mask, slot_mask)
 
         # === Phase 3+: Plan/VM losses ===
         l_plan = zero
@@ -198,16 +225,17 @@ class CombinedLossV6:
             + self.lambda_hash * l_hash
         )
 
-        return V6LossOutput(
-            total=total,
-            diffusion=l_diff,
-            slot=l_slot,
-            block=l_block,
-            balance=l_bal,
-            diversity=l_div,
-            hierarchy=l_hier,
-            plan=l_plan,
-            compose=l_compose,
-            template=l_template,
-            hash_consistency=l_hash,
-        )
+        breakdown = {
+            "ce": l_diff.item(),
+            "slot": l_slot.item() if isinstance(l_slot, torch.Tensor) else 0.0,
+            "block": l_block.item() if isinstance(l_block, torch.Tensor) else 0.0,
+            "balance": l_bal.item() if isinstance(l_bal, torch.Tensor) else 0.0,
+            "diversity": l_div.item() if isinstance(l_div, torch.Tensor) else 0.0,
+            "hierarchy": l_hier.item() if isinstance(l_hier, torch.Tensor) else 0.0,
+            "plan": l_plan.item() if isinstance(l_plan, torch.Tensor) else 0.0,
+            "compose": l_compose.item() if isinstance(l_compose, torch.Tensor) else 0.0,
+            "template": l_template.item() if isinstance(l_template, torch.Tensor) else 0.0,
+            "hash": l_hash.item() if isinstance(l_hash, torch.Tensor) else 0.0,
+        }
+
+        return total, breakdown

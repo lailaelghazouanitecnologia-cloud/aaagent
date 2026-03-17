@@ -22,9 +22,35 @@ Phase 5 (70K+):       Meta-learning
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from enum import IntEnum
+
 import torch.nn as nn
 
 from training.warmup import StructuralWarmup
+
+
+class WarmupPhase(IntEnum):
+    """Training phases for v6 warmup."""
+    EMBED_FREEZE = 0
+    EMBED_RAMP = 1
+    MULTILEVEL = 2
+    VM = 3
+    DYNAMIC = 4
+    META = 5
+
+
+@dataclass
+class WarmupState:
+    """Snapshot of warmup state at a given step."""
+    phase: WarmupPhase
+    gate_alpha: float
+    temperature: float
+    block_gate: float
+    multilevel_active: bool
+    vm_active: bool
+    dynamic_active: bool
+    meta_active: bool
 
 
 class V6Warmup(StructuralWarmup):
@@ -36,11 +62,14 @@ class V6Warmup(StructuralWarmup):
 
     def __init__(
         self,
-        # v4 warmup params
+        # v4 warmup params (accept short aliases too)
         gate_freeze_steps: int = 500,
-        gate_ramp_end_steps: int = 2000,
-        cluster_unfreeze_step: int = 500,
-        coarse_unfreeze_step: int = 3000,
+        gate_ramp_end_steps: int | None = None,
+        gate_ramp_end: int | None = None,
+        cluster_unfreeze_step: int | None = None,
+        cluster_unfreeze: int | None = None,
+        coarse_unfreeze_step: int | None = None,
+        coarse_unfreeze: int | None = None,
         temp_anneal_start: int = 2000,
         temp_anneal_end: int = 20000,
         temp_start: float = 1.0,
@@ -60,11 +89,16 @@ class V6Warmup(StructuralWarmup):
         block_gate_ramp_start: int = 10000,
         block_gate_ramp_end: int = 20000,
     ):
+        # Resolve short aliases
+        _gate_ramp_end = gate_ramp_end_steps or gate_ramp_end or 2000
+        _cluster_unfreeze = cluster_unfreeze_step or cluster_unfreeze or 500
+        _coarse_unfreeze = coarse_unfreeze_step or coarse_unfreeze or 3000
+
         super().__init__(
             gate_freeze_steps=gate_freeze_steps,
-            gate_ramp_end_steps=gate_ramp_end_steps,
-            cluster_unfreeze_step=cluster_unfreeze_step,
-            coarse_unfreeze_step=coarse_unfreeze_step,
+            gate_ramp_end_steps=_gate_ramp_end,
+            cluster_unfreeze_step=_cluster_unfreeze,
+            coarse_unfreeze_step=_coarse_unfreeze,
             temp_anneal_start=temp_anneal_start,
             temp_anneal_end=temp_anneal_end,
             temp_start=temp_start,
@@ -199,3 +233,30 @@ class V6Warmup(StructuralWarmup):
             base["hash"] = 0.0
 
         return base
+
+    def get_state(self, step: int) -> WarmupState:
+        """Get a complete warmup state snapshot at the given step."""
+        phase_int = self.get_phase(step)
+        phase = WarmupPhase(phase_int)
+
+        # Gate alpha
+        gate_val = self.get_gate_value(step)
+        if gate_val is None:
+            gate_alpha = 1.0
+        else:
+            gate_alpha = gate_val
+
+        return WarmupState(
+            phase=phase,
+            gate_alpha=gate_alpha,
+            temperature=self.get_router_temperature(step),
+            block_gate=self.get_block_gate_scale(step),
+            multilevel_active=self.is_multilevel_active(step),
+            vm_active=self.is_vm_active(step),
+            dynamic_active=self.is_dynamic_active(step),
+            meta_active=self.is_meta_active(step),
+        )
+
+
+# Alias for test compatibility
+WarmupSchedulerV6 = V6Warmup

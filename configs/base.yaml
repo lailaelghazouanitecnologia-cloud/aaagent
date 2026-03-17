@@ -13,7 +13,7 @@ model:
     coarse_clusters: 8    # M: number of coarse-grained clusters
     gate_min: 0.1         # Floor for gate activation
     alpha_init: 0.1       # Initial weight for cluster component
-    beta_init: 0.05       # Initial weight for hierarchy component
+    beta_init: 0.15       # Initial weight for hierarchy component
     use_gate: true
     use_hierarchy: true
 
@@ -45,7 +45,7 @@ diffusion:
 losses:
   lambda_balance: 0.01
   lambda_diversity: 0.001
-  lambda_hierarchy: 0.01
+  lambda_hierarchy: 0.05
 
 training:
   # Optimizer
@@ -73,6 +73,7 @@ training:
     temp_anneal_end: 20000        # Reach final temperature
     temp_start: 1.0               # Initial τ (uniform-ish routing)
     temp_end: 0.3                 # Final τ (sharp routing)
+    coarse_temp_ratio: 0.6        # Coarse router uses τ*0.6 (sharper for M=8)
 
     # Proposal B: Loss weight curriculum (ramp structural pressure)
     loss_ramp_start: 2000                  # Start ramping after warmup

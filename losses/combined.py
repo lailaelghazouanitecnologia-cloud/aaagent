@@ -48,6 +48,7 @@ class CombinedLoss:
         fine_centroids: torch.Tensor | None = None,
         coarse_centroids: torch.Tensor | None = None,
         fine_to_coarse_weights: torch.Tensor | None = None,
+        coarse_routing_weights: torch.Tensor | None = None,
         loss_multipliers: dict[str, float] | None = None,
     ) -> LossOutput:
         """Compute combined loss.
@@ -59,7 +60,8 @@ class CombinedLoss:
             routing_weights: Fine router outputs, shape [B, S, K].
             fine_centroids: Fine centroid matrix, shape [K, D].
             coarse_centroids: Coarse centroid matrix, shape [M, D].
-            fine_to_coarse_weights: Coarse router weights over fine clusters.
+            fine_to_coarse_weights: Coarse router weights for hierarchy loss.
+            coarse_routing_weights: Coarse router outputs [B, S, M] for balance.
             loss_multipliers: Dynamic multipliers from warmup curriculum.
                 Keys: 'hierarchy', 'balance', 'diversity'. Values multiply
                 the base lambdas. None = no scaling (multiplier 1.0).
@@ -85,6 +87,10 @@ class CombinedLoss:
 
         if routing_weights is not None and eff_balance > 0:
             l_bal = balance_loss(routing_weights)
+            # Also penalize uniform coarse routing — without this the coarse
+            # router has no direct gradient encouraging specialization.
+            if coarse_routing_weights is not None:
+                l_bal = l_bal + balance_loss(coarse_routing_weights)
 
         if fine_centroids is not None and eff_diversity > 0:
             l_div = diversity_loss(fine_centroids)

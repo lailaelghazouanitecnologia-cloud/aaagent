@@ -74,6 +74,7 @@ class HCLMD(nn.Module):
         attention_mask: torch.Tensor | None = None,
         gate_scale: torch.Tensor | None = None,
         router_temperature: torch.Tensor | None = None,
+        coarse_temperature: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Forward pass: embed → transform → project to logits.
 
@@ -82,8 +83,11 @@ class HCLMD(nn.Module):
             attention_mask: Padding mask, shape [B, S]. 1 = real, 0 = pad.
             gate_scale: Scalar tensor in [0, 1] scaling the learned gate
                         (structural warmup). None = full learned gate.
-            router_temperature: Scalar tensor for router softmax temperature.
+            router_temperature: Scalar tensor for fine router softmax temperature.
                                 None = no temperature scaling (τ=1).
+            coarse_temperature: Scalar tensor for coarse router softmax temperature.
+                                None = uses router_temperature. Coarse benefits
+                                from sharper (lower) temperature since M << K.
 
         Returns:
             Logits over vocabulary, shape [B, S, V].
@@ -94,6 +98,7 @@ class HCLMD(nn.Module):
                 masked_ids,
                 gate_scale=gate_scale,
                 router_temperature=router_temperature,
+                coarse_temperature=coarse_temperature,
             )
         else:
             h = self.embedding(masked_ids)

@@ -1,6 +1,6 @@
 """VM Opcodes — ~80 base operations + META opcodes.
 
-Each opcode is a function: (args, context) → result.
+Each opcode is a function: (*args) → OpResult.
 Opcodes are stateless; all state flows through the context.
 
 Categories:
@@ -18,359 +18,420 @@ from __future__ import annotations
 import json
 import math
 import re
-from typing import Any, Callable
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Callable, Optional
+
+
+# ── Result type ──
+
+@dataclass
+class OpResult:
+    """Result of executing an opcode."""
+    value: Any = None
+    success: bool = True
+    error: Optional[str] = None
+
+
+# ── Category enum ──
+
+class OpCategory(Enum):
+    MATH = "math"
+    STRING = "string"
+    LIST = "list"
+    DICT = "dict"
+    IO = "io"
+    CONTROL = "control"
+    META = "meta"
+    BLOCK = "block"
 
 
 # Type alias for opcode functions
-OpcodeFunc = Callable[[list[Any], dict[str, Any]], Any]
+OpcodeFunc = Callable[..., OpResult]
+
+
+def _ok(value: Any) -> OpResult:
+    return OpResult(value=value, success=True)
+
+
+def _err(msg: str) -> OpResult:
+    return OpResult(value=None, success=False, error=msg)
 
 
 # ── MATH ──
 
-def op_add(args, ctx):
-    return args[0] + args[1]
+def op_add(a, b):
+    return _ok(a + b)
 
-def op_sub(args, ctx):
-    return args[0] - args[1]
+def op_sub(a, b):
+    return _ok(a - b)
 
-def op_mul(args, ctx):
-    return args[0] * args[1]
+def op_mul(a, b):
+    return _ok(a * b)
 
-def op_div(args, ctx):
-    if args[1] == 0:
-        return float("inf")
-    return args[0] / args[1]
+def op_div(a, b):
+    if b == 0:
+        return _err("division by zero")
+    return _ok(a / b)
 
-def op_mod(args, ctx):
-    return args[0] % args[1]
+def op_mod(a, b):
+    return _ok(a % b)
 
-def op_pow(args, ctx):
-    return args[0] ** args[1]
+def op_pow(a, b):
+    return _ok(a ** b)
 
-def op_sqrt(args, ctx):
-    return math.sqrt(abs(args[0]))
+def op_sqrt(a):
+    return _ok(math.sqrt(abs(a)))
 
-def op_abs(args, ctx):
-    return abs(args[0])
+def op_abs(a):
+    return _ok(abs(a))
 
-def op_round(args, ctx):
-    decimals = args[1] if len(args) > 1 else 0
-    return round(args[0], int(decimals))
+def op_round(a, decimals=0):
+    return _ok(round(a, int(decimals)))
 
-def op_sum(args, ctx):
-    return sum(args[0])
+def op_sum(lst):
+    return _ok(sum(lst))
 
-def op_mean(args, ctx):
-    lst = args[0]
-    return sum(lst) / len(lst) if lst else 0
+def op_mean(lst):
+    return _ok(sum(lst) / len(lst) if lst else 0)
 
-def op_max(args, ctx):
-    return max(args[0])
+def op_max(lst):
+    return _ok(max(lst))
 
-def op_min(args, ctx):
-    return min(args[0])
+def op_min(lst):
+    return _ok(min(lst))
 
-def op_count(args, ctx):
-    return len(args[0])
+def op_count(lst):
+    return _ok(len(lst))
 
-def op_is_prime(args, ctx):
-    n = int(args[0])
+def op_is_prime(n):
+    n = int(n)
     if n < 2:
-        return False
+        return _ok(False)
     for i in range(2, int(n**0.5) + 1):
         if n % i == 0:
-            return False
-    return True
+            return _ok(False)
+    return _ok(True)
 
-def op_gcd(args, ctx):
-    return math.gcd(int(args[0]), int(args[1]))
+def op_gcd(a, b):
+    return _ok(math.gcd(int(a), int(b)))
 
 
 # ── STRING ──
 
-def op_concat(args, ctx):
-    return "".join(str(a) for a in args)
+def op_concat(*args):
+    return _ok("".join(str(a) for a in args))
 
-def op_split(args, ctx):
-    return args[0].split(args[1] if len(args) > 1 else " ")
+def op_split(s, sep=None):
+    return _ok(s.split(sep if sep is not None else " "))
 
-def op_join(args, ctx):
-    sep = args[1] if len(args) > 1 else " "
-    return sep.join(str(x) for x in args[0])
+def op_join(lst, sep=" "):
+    return _ok(sep.join(str(x) for x in lst))
 
-def op_upper(args, ctx):
-    return str(args[0]).upper()
+def op_upper(s):
+    return _ok(str(s).upper())
 
-def op_lower(args, ctx):
-    return str(args[0]).lower()
+def op_lower(s):
+    return _ok(str(s).lower())
 
-def op_replace(args, ctx):
-    return str(args[0]).replace(str(args[1]), str(args[2]))
+def op_replace(s, old, new):
+    return _ok(str(s).replace(str(old), str(new)))
 
-def op_trim(args, ctx):
-    return str(args[0]).strip()
+def op_trim(s):
+    return _ok(str(s).strip())
 
-def op_contains(args, ctx):
-    return str(args[1]) in str(args[0])
+def op_contains(s, sub):
+    return _ok(str(sub) in str(s))
 
-def op_length(args, ctx):
-    return len(args[0])
+def op_length(s):
+    return _ok(len(s))
 
-def op_slice(args, ctx):
-    start = int(args[1]) if len(args) > 1 else 0
-    end = int(args[2]) if len(args) > 2 else None
-    return args[0][start:end]
+def op_slice(s, start=0, end=None):
+    return _ok(s[int(start):end if end is None else int(end)])
 
-def op_format(args, ctx):
-    template = str(args[0])
-    return template.format(*args[1:])
+def op_format(template, *args):
+    return _ok(str(template).format(*args))
 
-def op_regex(args, ctx):
-    pattern = str(args[1])
-    return re.findall(pattern, str(args[0]))
+def op_regex(s, pattern):
+    return _ok(re.findall(str(pattern), str(s)))
 
 
 # ── LIST ──
 
-def op_map(args, ctx):
-    fn_name = args[1]
+def op_map(lst, fn_name, fn_args=None):
+    """Map an opcode over a list. fn_args are extra args passed after each element."""
     fn = OPCODE_REGISTRY.get(fn_name)
     if fn is None:
-        return args[0]
-    return [fn([x], ctx) for x in args[0]]
+        return _err(f"unknown opcode: {fn_name}")
+    extra = fn_args or []
+    results = []
+    for x in lst:
+        r = fn(x, *extra)
+        if isinstance(r, OpResult):
+            results.append(r.value)
+        else:
+            results.append(r)
+    return _ok(results)
 
-def op_filter(args, ctx):
-    fn_name = args[1]
+def op_filter(lst, fn_name, fn_args=None):
+    """Filter list by a comparator. Supports 'gt', 'lt', 'eq', etc."""
+    extra = fn_args or []
+    # Built-in comparators
+    comparators = {
+        "gt": lambda x, t: x > t,
+        "lt": lambda x, t: x < t,
+        "eq": lambda x, t: x == t,
+        "gte": lambda x, t: x >= t,
+        "lte": lambda x, t: x <= t,
+        "ne": lambda x, t: x != t,
+    }
+    if fn_name in comparators:
+        cmp = comparators[fn_name]
+        return _ok([x for x in lst if cmp(x, *extra)])
+
     fn = OPCODE_REGISTRY.get(fn_name)
     if fn is None:
-        return args[0]
-    return [x for x in args[0] if fn([x], ctx)]
+        return _err(f"unknown opcode: {fn_name}")
+    result = []
+    for x in lst:
+        r = fn(x, *extra)
+        val = r.value if isinstance(r, OpResult) else r
+        if val:
+            result.append(x)
+    return _ok(result)
 
-def op_reduce(args, ctx):
-    fn_name = args[1]
+def op_reduce(lst, fn_name):
     fn = OPCODE_REGISTRY.get(fn_name)
-    if fn is None or not args[0]:
-        return args[0]
-    result = args[0][0]
-    for x in args[0][1:]:
-        result = fn([result, x], ctx)
-    return result
+    if fn is None or not lst:
+        return _ok(lst)
+    result = lst[0]
+    for x in lst[1:]:
+        r = fn(result, x)
+        result = r.value if isinstance(r, OpResult) else r
+    return _ok(result)
 
-def op_sort(args, ctx):
-    reverse = bool(args[1]) if len(args) > 1 else False
-    return sorted(args[0], reverse=reverse)
+def op_sort(lst, reverse=False):
+    return _ok(sorted(lst, reverse=bool(reverse)))
 
-def op_reverse(args, ctx):
-    return list(reversed(args[0]))
+def op_reverse(lst):
+    return _ok(list(reversed(lst)))
 
-def op_unique(args, ctx):
+def op_unique(lst):
     seen = set()
     result = []
-    for x in args[0]:
+    for x in lst:
         key = str(x)
         if key not in seen:
             seen.add(key)
             result.append(x)
-    return result
+    return _ok(result)
 
-def op_flatten(args, ctx):
+def op_flatten(lst):
     result = []
-    for item in args[0]:
+    for item in lst:
         if isinstance(item, list):
             result.extend(item)
         else:
             result.append(item)
-    return result
+    return _ok(result)
 
-def op_zip(args, ctx):
-    return list(zip(*args))
+def op_zip(*lists):
+    return _ok(list(zip(*lists)))
 
-def op_take(args, ctx):
-    return args[0][:int(args[1])]
+def op_take(lst, n):
+    return _ok(lst[:int(n)])
 
-def op_skip(args, ctx):
-    return args[0][int(args[1]):]
+def op_skip(lst, n):
+    return _ok(lst[int(n):])
 
-def op_enumerate(args, ctx):
-    return list(enumerate(args[0]))
+def op_enumerate(lst):
+    return _ok(list(enumerate(lst)))
 
-def op_range(args, ctx):
-    if len(args) == 1:
-        return list(range(int(args[0])))
-    elif len(args) == 2:
-        return list(range(int(args[0]), int(args[1])))
-    else:
-        return list(range(int(args[0]), int(args[1]), int(args[2])))
+def op_range(*args):
+    return _ok(list(range(*(int(a) for a in args))))
 
 
 # ── DICT ──
 
-def op_get(args, ctx):
-    d = args[0]
-    key = args[1]
-    default = args[2] if len(args) > 2 else None
-    return d.get(key, default) if isinstance(d, dict) else default
+def op_get(d, key, default=None):
+    return _ok(d.get(key, default) if isinstance(d, dict) else default)
 
-def op_set(args, ctx):
-    d = dict(args[0]) if isinstance(args[0], dict) else {}
-    d[args[1]] = args[2]
-    return d
+def op_set(d, key, value):
+    result = dict(d) if isinstance(d, dict) else {}
+    result[key] = value
+    return _ok(result)
 
-def op_keys(args, ctx):
-    return list(args[0].keys()) if isinstance(args[0], dict) else []
+def op_keys(d):
+    return _ok(list(d.keys()) if isinstance(d, dict) else [])
 
-def op_values(args, ctx):
-    return list(args[0].values()) if isinstance(args[0], dict) else []
+def op_values(d):
+    return _ok(list(d.values()) if isinstance(d, dict) else [])
 
-def op_merge(args, ctx):
+def op_merge(*dicts):
     result = {}
-    for d in args:
+    for d in dicts:
         if isinstance(d, dict):
             result.update(d)
-    return result
+    return _ok(result)
 
-def op_has_key(args, ctx):
-    return args[1] in args[0] if isinstance(args[0], dict) else False
+def op_has_key(d, key):
+    return _ok(key in d if isinstance(d, dict) else False)
 
-def op_delete(args, ctx):
-    d = dict(args[0]) if isinstance(args[0], dict) else {}
-    d.pop(args[1], None)
-    return d
+def op_delete(d, key):
+    result = dict(d) if isinstance(d, dict) else {}
+    result.pop(key, None)
+    return _ok(result)
 
-def op_from_pairs(args, ctx):
-    return dict(args[0])
+def op_from_pairs(pairs):
+    return _ok(dict(pairs))
 
-def op_group_by(args, ctx):
-    lst = args[0]
-    key = args[1]
+def op_group_by(lst, key):
     result = {}
     for item in lst:
         k = item.get(key) if isinstance(item, dict) else str(item)
         result.setdefault(k, []).append(item)
-    return result
+    return _ok(result)
 
 
 # ── IO ──
 
-def op_parse_json(args, ctx):
-    return json.loads(str(args[0]))
+def op_parse_json(s):
+    return _ok(json.loads(str(s)))
 
-def op_dump_json(args, ctx):
-    return json.dumps(args[0], indent=2, default=str)
+def op_dump_json(obj):
+    return _ok(json.dumps(obj, indent=2, default=str))
 
-def op_print(args, ctx):
+def op_print(*args):
     result = " ".join(str(a) for a in args)
-    ctx.setdefault("_output", []).append(result)
-    return result
+    return _ok(result)
 
 
 # ── CONTROL ──
 
-def op_if(args, ctx):
-    condition, then_val = args[0], args[1]
-    else_val = args[2] if len(args) > 2 else None
-    return then_val if condition else else_val
+def op_if(condition, then_val, else_val=None):
+    return _ok(then_val if condition else else_val)
 
-def op_pipe(args, ctx):
-    """Pipe: result of each step feeds into next."""
-    value = args[0]
-    for fn_name in args[1:]:
+def op_pipe(value, steps):
+    """Pipe: result of each step feeds into next.
+
+    Args:
+        value: Initial value
+        steps: List of (opcode_name, extra_args) tuples
+    """
+    for step in steps:
+        fn_name, extra_args = step
         fn = OPCODE_REGISTRY.get(fn_name)
-        if fn:
-            value = fn([value], ctx)
-    return value
+        if fn is None:
+            return _err(f"unknown opcode in pipe: {fn_name}")
+        r = fn(value, *extra_args)
+        value = r.value if isinstance(r, OpResult) else r
+    return _ok(value)
 
-def op_sequence(args, ctx):
+def op_sequence(*items):
     """Execute opcodes in sequence, return last result."""
     result = None
-    for item in args:
+    for item in items:
         if isinstance(item, tuple) and len(item) == 2:
             fn_name, fn_args = item
             fn = OPCODE_REGISTRY.get(fn_name)
             if fn:
-                result = fn(fn_args, ctx)
-    return result
+                r = fn(*fn_args)
+                result = r.value if isinstance(r, OpResult) else r
+    return _ok(result)
 
 
 # ── META ──
-# These opcodes allow the system to self-modify its block registry.
 
-def op_think(args, ctx):
-    """Allocate compute budget (no-op in VM, signal for planner)."""
-    steps = int(args[0]) if args else 1
-    ctx["_think_budget"] = steps
-    return steps
+def op_think(steps=1):
+    return _ok(int(steps))
 
-def op_retrieve(args, ctx):
-    """Retrieve a value from context."""
-    key = str(args[0])
-    return ctx.get(key)
+def op_retrieve(key):
+    return _ok(None)  # Placeholder — resolved by executor via context
 
-def op_plan(args, ctx):
-    """Create a plan structure (parsed by planner, not VM)."""
-    return {"type": "plan", "steps": args}
+def op_plan(*steps):
+    return _ok({"type": "plan", "steps": list(steps)})
 
-def op_replan(args, ctx):
-    """Signal to re-plan from current state."""
-    ctx["_replan"] = True
-    return {"type": "replan", "reason": str(args[0]) if args else ""}
+def op_replan(reason=""):
+    return _ok({"type": "replan", "reason": str(reason)})
 
-def op_abort(args, ctx):
-    """Abort current execution."""
-    ctx["_abort"] = True
-    return {"type": "abort", "reason": str(args[0]) if args else ""}
+def op_abort(reason=""):
+    return _ok({"type": "abort", "reason": str(reason)})
 
-def op_create_template(args, ctx):
-    """Create a new template block at runtime."""
-    return {"type": "create_template", "name": str(args[0]), "slots": int(args[1]) if len(args) > 1 else 0}
+def op_create_template(name, slots=0):
+    return _ok({"type": "create_template", "name": str(name), "slots": int(slots)})
 
-def op_register_block(args, ctx):
-    """Register a block in the global registry."""
-    return {"type": "register_block", "block": args[0]}
+def op_register_block(block):
+    return _ok({"type": "register_block", "block": block})
 
-def op_lookup_hash(args, ctx):
-    """Look up a block by hash."""
-    return {"type": "lookup_hash", "hash": str(args[0])}
+def op_lookup_hash(h):
+    return _ok({"type": "lookup_hash", "hash": str(h)})
 
 
-# ── BLOCK OPERATIONS (new for v6) ──
+# ── BLOCK OPERATIONS (v6) ──
 
-def op_expand_template(args, ctx):
-    """Expand a template by filling its slots."""
-    return {"type": "expand_template", "template": args[0], "bindings": args[1:]}
+def op_expand_template(template, *bindings):
+    return _ok({"type": "expand_template", "template": template, "bindings": list(bindings)})
 
-def op_bind_slot(args, ctx):
-    """Bind a value to a template slot."""
-    return {"type": "bind_slot", "slot_idx": int(args[0]), "value": args[1]}
+def op_bind_slot(slot_idx, value):
+    return _ok({"type": "bind_slot", "slot_idx": int(slot_idx), "value": value})
 
-def op_merge_block(args, ctx):
-    """Merge two blocks into one."""
-    return {"type": "merge_block", "blocks": args}
+def op_merge_block(*blocks):
+    return _ok({"type": "merge_block", "blocks": list(blocks)})
 
-def op_hash_block(args, ctx):
-    """Compute hash of a block."""
-    if hasattr(args[0], "semantic_hash"):
-        return args[0].semantic_hash().hex()
-    return str(hash(str(args[0])))
+def op_hash_block(block):
+    if hasattr(block, "semantic_hash"):
+        return _ok(block.semantic_hash().hex())
+    return _ok(str(hash(str(block))))
 
-def op_rewrite_block(args, ctx):
-    """Rewrite a block (T2T correction)."""
-    return {"type": "rewrite_block", "original": args[0], "replacement": args[1]}
+def op_rewrite_block(original, replacement):
+    return _ok({"type": "rewrite_block", "original": original, "replacement": replacement})
 
-def op_freeze_block(args, ctx):
-    """Mark a block as immutable."""
-    return {"type": "freeze_block", "block": args[0]}
+def op_freeze_block(block):
+    return _ok({"type": "freeze_block", "block": block})
 
-def op_abstract_block(args, ctx):
-    """Abstract a block into a template (extract common structure)."""
-    return {"type": "abstract_block", "block": args[0]}
+def op_abstract_block(block):
+    return _ok({"type": "abstract_block", "block": block})
 
-def op_inline_block(args, ctx):
-    """Inline a template block (expand in place)."""
-    return {"type": "inline_block", "template": args[0]}
+def op_inline_block(template):
+    return _ok({"type": "inline_block", "template": template})
 
 
 # ── REGISTRY ──
+
+# Category mapping for each opcode
+_OPCODE_CATEGORIES: dict[str, OpCategory] = {}
+
+def _register_category(cat: OpCategory, names: list[str]) -> None:
+    for name in names:
+        _OPCODE_CATEGORIES[name] = cat
+
+_register_category(OpCategory.MATH, [
+    "add", "sub", "mul", "div", "mod", "pow", "sqrt", "abs",
+    "round", "sum", "mean", "max", "min", "count", "is_prime", "gcd",
+])
+_register_category(OpCategory.STRING, [
+    "concat", "split", "join", "upper", "lower", "replace",
+    "trim", "contains", "length", "slice", "format", "regex",
+])
+_register_category(OpCategory.LIST, [
+    "map", "filter", "reduce", "sort", "reverse", "unique",
+    "flatten", "zip", "take", "skip", "enumerate", "range",
+])
+_register_category(OpCategory.DICT, [
+    "get", "set", "keys", "values", "merge", "has_key",
+    "delete", "from_pairs", "group_by",
+])
+_register_category(OpCategory.IO, ["parse_json", "dump_json", "print"])
+_register_category(OpCategory.CONTROL, ["if", "pipe", "sequence"])
+_register_category(OpCategory.META, [
+    "think", "retrieve", "plan", "replan", "abort",
+    "create_template", "register_block", "lookup_hash",
+])
+_register_category(OpCategory.BLOCK, [
+    "expand_template", "bind_slot", "merge_block", "hash_block",
+    "rewrite_block", "freeze_block", "abstract_block", "inline_block",
+])
+
 
 OPCODE_REGISTRY: dict[str, OpcodeFunc] = {
     # Math
@@ -407,3 +468,31 @@ OPCODE_REGISTRY: dict[str, OpcodeFunc] = {
     "rewrite_block": op_rewrite_block, "freeze_block": op_freeze_block,
     "abstract_block": op_abstract_block, "inline_block": op_inline_block,
 }
+
+
+class OpcodeRegistry:
+    """Registry for looking up opcodes by name or category."""
+
+    def __init__(self) -> None:
+        self._ops = dict(OPCODE_REGISTRY)
+        self._categories = dict(_OPCODE_CATEGORIES)
+
+    def lookup(self, name: str) -> Optional[OpcodeFunc]:
+        """Look up an opcode by name."""
+        return self._ops.get(name)
+
+    def by_category(self, category: OpCategory) -> dict[str, OpcodeFunc]:
+        """Get all opcodes in a category."""
+        return {
+            name: self._ops[name]
+            for name, cat in self._categories.items()
+            if cat == category and name in self._ops
+        }
+
+    def register(self, name: str, fn: OpcodeFunc, category: OpCategory) -> None:
+        """Register a new opcode."""
+        self._ops[name] = fn
+        self._categories[name] = category
+
+    def names(self) -> list[str]:
+        return list(self._ops.keys())

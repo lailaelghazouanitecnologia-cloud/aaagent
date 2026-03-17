@@ -39,6 +39,8 @@ class StructuralWarmup:
         temp_anneal_end: int = 20000,
         temp_start: float = 1.0,
         temp_end: float = 0.3,
+        # Coarse router gets sharper temperature (M << K needs less smoothing)
+        coarse_temp_ratio: float = 0.6,
         # Proposal B: loss curriculum
         loss_ramp_start: int = 2000,
         loss_ramp_end: int = 20000,
@@ -57,6 +59,7 @@ class StructuralWarmup:
         self.temp_anneal_end = temp_anneal_end
         self.temp_start = temp_start
         self.temp_end = temp_end
+        self.coarse_temp_ratio = coarse_temp_ratio
 
         # Loss curriculum
         self.loss_ramp_start = loss_ramp_start
@@ -100,6 +103,19 @@ class StructuralWarmup:
                 self.temp_anneal_end - self.temp_anneal_start, 1
             )
             return self.temp_start + progress * (self.temp_end - self.temp_start)
+
+    def get_coarse_temperature(self, step: int) -> float:
+        """Get the coarse router temperature.
+
+        Coarse router uses a sharper (lower) temperature than fine router
+        because it has far fewer clusters (M=8 vs K=64). With the same
+        high temperature, softmax over 8 logits produces near-uniform
+        distributions, preventing the coarse router from learning.
+
+        Returns: coarse_temp = fine_temp * coarse_temp_ratio
+        """
+        fine_temp = self.get_router_temperature(step)
+        return fine_temp * self.coarse_temp_ratio
 
     def get_loss_multipliers(self, step: int) -> dict[str, float]:
         """Get dynamic loss weight multipliers for the current step.

@@ -17,14 +17,14 @@ model:
     coarse_clusters: 8
     gate_min: 0.1
     alpha_init: 0.1
-    beta_init: 0.05
+    beta_init: 0.15
     use_gate: true
     use_hierarchy: true
 
 losses:
   lambda_balance: 0.01
   lambda_diversity: 0.001
-  lambda_hierarchy: 0.01
+  lambda_hierarchy: 0.05
 
 training:
   structural_warmup:
@@ -38,6 +38,7 @@ training:
     temp_anneal_end: 20000
     temp_start: 1.0
     temp_end: 0.3
+    coarse_temp_ratio: 0.6
 
     # Proposal B: loss curriculum
     loss_ramp_start: 2000

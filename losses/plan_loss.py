@@ -13,7 +13,38 @@ Components:
 from __future__ import annotations
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
+
+
+class PlanLoss(nn.Module):
+    """Combined plan loss: complexity prediction + step count prediction."""
+
+    def __init__(self, n_complexity_classes: int = 3):
+        super().__init__()
+        self.n_complexity_classes = n_complexity_classes
+
+    def forward(
+        self,
+        complexity_logits: torch.Tensor,
+        complexity_labels: torch.Tensor,
+        pred_steps: torch.Tensor,
+        true_steps: torch.Tensor,
+    ) -> torch.Tensor:
+        """Compute plan loss.
+
+        Args:
+            complexity_logits: [N, n_classes] logits for complexity prediction
+            complexity_labels: [N] class labels
+            pred_steps: [N] predicted step counts
+            true_steps: [N] actual step counts
+
+        Returns:
+            Scalar loss tensor.
+        """
+        l_complexity = F.cross_entropy(complexity_logits, complexity_labels)
+        l_steps = F.mse_loss(pred_steps, true_steps)
+        return l_complexity + l_steps
 
 
 def plan_execution_loss(

@@ -11,7 +11,36 @@ L_hash = contrastive(E_block, H_sem)
 from __future__ import annotations
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
+
+
+class TemplateLoss(nn.Module):
+    """Template hash prediction loss (cosine similarity)."""
+
+    def __init__(self, embed_dim: int = 384):
+        super().__init__()
+        self.embed_dim = embed_dim
+
+    def forward(
+        self,
+        pred_hash: torch.Tensor,
+        true_hash: torch.Tensor,
+    ) -> torch.Tensor:
+        """Compute cosine embedding loss between predicted and true hash.
+
+        Args:
+            pred_hash: [N, D] predicted hash embeddings
+            true_hash: [N, D] ground truth hash embeddings (normalized)
+
+        Returns:
+            Scalar loss tensor.
+        """
+        # Normalize predictions
+        pred_norm = pred_hash / (pred_hash.norm(dim=-1, keepdim=True) + 1e-8)
+        # 1 - cos_sim as loss
+        cos_sim = (pred_norm * true_hash).sum(dim=-1)
+        return (1.0 - cos_sim).mean()
 
 
 def template_selection_loss(
