@@ -4,9 +4,17 @@ Downloads, filters, and tokenizes data from multiple sources into
 a single training corpus with configurable domain ratios.
 
 Datasets:
-    EN: roneneldan/TinyStories (simple english, good for small models)
-    ES: datificate/SomosNLP-ultrachat_200k-es (conversational spanish)
-    Python: bigcode/the-stack-dedup (language=python, filtered)
+    EN (multi-source):
+        - roneneldan/TinyStories (simple stories, narrative structure)
+        - wikipedia/20220301.en (encyclopedic, factual, formal)
+        - Open-Orca/OpenOrca (instruction-following, Q&A, reasoning)
+        - HuggingFaceFW/fineweb-edu (high-quality educational web text)
+    ES:
+        - datificate/SomosNLP-ultrachat_200k-es (conversational spanish)
+        - wikipedia/20220301.es (fallback)
+    Python:
+        - bigcode/the-stack-dedup (language=python, filtered)
+        - codeparrot/github-code (fallback)
 """
 
 from __future__ import annotations
@@ -26,30 +34,139 @@ DEFAULT_TOTAL_TOKENS = 50_000_000  # 50M
 
 # ── Downloaders ──
 
-def _download_english(data_dir: Path, max_chars: int) -> Path:
-    """Download English text from TinyStories."""
+# English sources with proportions (within the EN budget)
+EN_SOURCES = [
+    {
+        "name": "TinyStories",
+        "dataset": "roneneldan/TinyStories",
+        "split": "train",
+        "field": "text",
+        "ratio": 0.15,         # 15% — simple narrative structure
+        "streaming": False,
+        "min_len": 50,
+    },
+    {
+        "name": "Wikipedia EN",
+        "dataset": "wikipedia",
+        "config": "20220301.en",
+        "split": "train",
+        "field": "text",
+        "ratio": 0.30,         # 30% — factual, formal, encyclopedic
+        "streaming": False,
+        "min_len": 200,
+    },
+    {
+        "name": "OpenOrca",
+        "dataset": "Open-Orca/OpenOrca",
+        "split": "train",
+        "field": "response",   # Q&A responses — reasoning, instructions
+        "ratio": 0.25,         # 25% — instruction-following, reasoning
+        "streaming": False,
+        "min_len": 100,
+    },
+    {
+        "name": "FineWeb-Edu",
+        "dataset": "HuggingFaceFW/fineweb-edu-score-2",
+        "split": "train",
+        "field": "text",
+        "ratio": 0.30,         # 30% — high-quality educational web text
+        "streaming": True,
+        "min_len": 200,
+    },
+]
+
+
+def _download_en_source(source: dict, data_dir: Path, max_chars: int) -> int:
+    """Download a single English source. Returns chars written."""
     from datasets import load_dataset
 
-    out = data_dir / "en_raw.txt"
+    name = source["name"]
+    out = data_dir / f"en_{name.lower().replace(' ', '_').replace('-', '_')}.txt"
+
     if out.exists():
-        logger.info("English data already exists at %s", out)
-        return out
+        size = out.stat().st_size
+        logger.info("  %s already exists (%d chars)", name, size)
+        return size
 
-    logger.info("Downloading English (TinyStories)...")
-    ds = load_dataset("roneneldan/TinyStories", split="train", trust_remote_code=True)
+    logger.info("  Downloading %s...", name)
 
+    kwargs = {
+        "path": source["dataset"],
+        "split": source["split"],
+        "trust_remote_code": True,
+    }
+    if source.get("config"):
+        kwargs["name"] = source["config"]
+    if source.get("streaming"):
+        kwargs["streaming"] = True
+
+    try:
+        ds = load_dataset(**kwargs)
+    except Exception as e:
+        logger.warning("  Failed to load %s: %s — skipping", name, e)
+        return 0
+
+    field = source["field"]
+    min_len = source.get("min_len", 50)
     chars = 0
+
     with open(out, "w", encoding="utf-8") as f:
         for example in ds:
-            text = example["text"].strip()
-            if not text:
+            text = example.get(field, "").strip()
+            if not text or len(text) < min_len:
                 continue
+            # Cap individual documents at 5000 chars for diversity
+            if len(text) > 5000:
+                text = text[:5000]
             f.write(text + "\n\n")
             chars += len(text)
             if chars >= max_chars:
                 break
 
-    logger.info("English: %d chars written to %s", chars, out)
+    logger.info("  %s: %d chars", name, chars)
+    return chars
+
+
+def _download_english(data_dir: Path, max_chars: int) -> Path:
+    """Download English text from multiple sources for diversity."""
+    out = data_dir / "en_raw.txt"
+    if out.exists():
+        logger.info("English data already exists at %s", out)
+        return out
+
+    logger.info("Downloading English (multi-source)...")
+
+    # Download each source with its proportion of the budget
+    for source in EN_SOURCES:
+        source_budget = int(max_chars * source["ratio"])
+        _download_en_source(source, data_dir, source_budget)
+
+    # Merge all EN source files into en_raw.txt, interleaved for diversity
+    logger.info("Merging English sources...")
+    source_chunks: list[list[str]] = []
+
+    for source in EN_SOURCES:
+        name = source["name"].lower().replace(" ", "_").replace("-", "_")
+        src_file = data_dir / f"en_{name}.txt"
+        if src_file.exists():
+            with open(src_file, "r", encoding="utf-8") as f:
+                docs = [d.strip() for d in f.read().split("\n\n") if d.strip()]
+            source_chunks.append(docs)
+
+    # Interleave: round-robin from each source for good mixing
+    merged: list[str] = []
+    max_len = max(len(c) for c in source_chunks) if source_chunks else 0
+    for i in range(max_len):
+        for chunks in source_chunks:
+            if i < len(chunks):
+                merged.append(chunks[i])
+
+    with open(out, "w", encoding="utf-8") as f:
+        for doc in merged:
+            f.write(doc + "\n\n")
+
+    total_chars = sum(len(d) for d in merged)
+    logger.info("English merged: %d docs, %d chars → %s", len(merged), total_chars, out)
     return out
 
 

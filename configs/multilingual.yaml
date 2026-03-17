@@ -92,9 +92,14 @@ data:
   tokenizer_path: "data/tokenizer_multilingual.json"
   total_tokens: 50000000      # 50M tokens total
   domain_ratios:
-    en: 0.25                  # 12.5M tokens English
+    en: 0.25                  # 12.5M tokens English (multi-source)
     es: 0.25                  # 12.5M tokens Spanish
     python: 0.50              # 25M tokens Python code
+  # EN breakdown (within the 25% budget):
+  #   15% TinyStories — narrative, simple structure
+  #   30% Wikipedia EN — factual, encyclopedic, formal
+  #   25% OpenOrca — instruction-following, Q&A, reasoning
+  #   30% FineWeb-Edu — high-quality educational web text
   num_workers: auto
   prefetch_factor: 2
 
