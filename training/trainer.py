@@ -159,6 +159,16 @@ class Trainer:
         if self.meta_enabled:
             self._init_meta_optimizer(meta_cfg)
 
+        # ── Hierarchy optimization (optional) ──
+        hier_cfg = train_cfg.get("hierarchy", {})
+        self.hierarchy_enabled = hier_cfg.get("enabled", False)
+        self.hierarchy_every = hier_cfg.get("run_every_steps", 5000)
+        self.hierarchy_start = hier_cfg.get("start_after_step", 5000)
+        self.hierarchy_search = None
+
+        if self.hierarchy_enabled:
+            self._init_hierarchy_search(hier_cfg)
+
         # ── Dashboard reporter (optional) ──
         self.reporter = None
         self._init_dashboard_reporter(train_cfg)
@@ -210,6 +220,58 @@ class Trainer:
         except Exception as e:
             logger.warning("Meta-optimizer init failed (%s), disabling", e)
             self.meta_enabled = False
+
+    def _init_hierarchy_search(self, hier_cfg: dict) -> None:
+        """Initialize LLM-guided hierarchy search."""
+        try:
+            from hierarchy.search import HierarchySearch
+            from hierarchy.llm_judge import LLMJudge
+
+            judge = LLMJudge(
+                backend=hier_cfg.get("llm_backend", "mock"),
+                model=hier_cfg.get("llm_model", "claude-sonnet-4-20250514"),
+                api_key=hier_cfg.get("api_key"),
+            )
+            self.hierarchy_search = HierarchySearch(
+                model=self._raw_model,
+                tokenizer=getattr(self, "tokenizer", None),
+                judge=judge,
+                max_nodes=hier_cfg.get("max_search_nodes", 20),
+                max_depth=hier_cfg.get("max_search_depth", 3),
+                beam_width=hier_cfg.get("beam_width", 5),
+                device=str(self.device),
+            )
+            logger.info(
+                "Hierarchy search: ON (every %d steps, starts at step %d, backend=%s)",
+                self.hierarchy_every, self.hierarchy_start,
+                hier_cfg.get("llm_backend", "mock"),
+            )
+        except Exception as e:
+            logger.warning("Hierarchy search init failed (%s), disabling", e)
+            self.hierarchy_enabled = False
+
+    def _run_hierarchy_search(self) -> None:
+        """Run A* hierarchy search and log results."""
+        if self.hierarchy_search is None:
+            return
+        try:
+            # Update tokenizer in case it was set after init
+            self.hierarchy_search.analyzer.tokenizer = self.tokenizer
+            result = self.hierarchy_search.search(step=self.global_step)
+            logger.info(
+                "Step %d | Hierarchy search: score %.2f → %.2f (%+.2f) | "
+                "%d actions, %d nodes, %.1fs",
+                self.global_step,
+                result.initial_score, result.best_score, result.improvement,
+                len(result.best_actions), result.nodes_explored, result.time_seconds,
+            )
+            if result.best_actions:
+                for a in result.best_actions:
+                    logger.info("  Action: %s", a)
+            if result.judgment and result.judgment.reasoning:
+                logger.info("  Reasoning: %s", result.judgment.reasoning)
+        except Exception as e:
+            logger.warning("Hierarchy search failed at step %d: %s", self.global_step, e)
 
     def _init_dashboard_reporter(self, train_cfg: dict) -> None:
         """Initialize dashboard reporter if reachable."""
@@ -307,6 +369,12 @@ class Trainer:
                 # ── Sample generation ──
                 if self.global_step % self.generate_every == 0:
                     self._generate_samples()
+
+                # ── Hierarchy optimization ──
+                if (self.hierarchy_enabled
+                        and self.global_step >= self.hierarchy_start
+                        and self.global_step % self.hierarchy_every == 0):
+                    self._run_hierarchy_search()
 
         # Final save and generation
         self.save()

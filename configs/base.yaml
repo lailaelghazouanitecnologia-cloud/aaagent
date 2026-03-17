@@ -107,6 +107,17 @@ training:
     - "The little girl"
     - "There was a big"
 
+  # Hierarchy optimization (LLM-guided A* search)
+  hierarchy:
+    enabled: false
+    run_every_steps: 5000           # Run hierarchy search every N steps
+    start_after_step: 5000          # Don't run before clusters have trained
+    llm_backend: "groq"             # "groq", "anthropic", "openai", "local", "mock"
+    llm_model: "moonshotai/kimi-k2-instruct-0905"
+    max_search_nodes: 20            # A* budget
+    max_search_depth: 3             # Max actions per search
+    beam_width: 5
+
   # Meta-optimizer (Phase 5, optional)
   meta:
     enabled: false

@@ -46,6 +46,19 @@ training:
     loss_multiplier_balance_max: 5.0
     loss_multiplier_diversity_max: 10.0
 
+  # Use more VRAM: larger batch
+  batch_size: 96
+
+  # Hierarchy optimization: LLM-guided A* search
+  hierarchy:
+    enabled: true
+    run_every_steps: 5000
+    start_after_step: 5000
+    llm_backend: "groq"
+    max_search_nodes: 20
+    max_search_depth: 3
+    beam_width: 5
+
   meta:
     enabled: true
     enable_after_step: 50000
