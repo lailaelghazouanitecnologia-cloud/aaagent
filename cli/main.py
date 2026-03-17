@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+"""z86 — HCLM-D command-line interface.
+
+Usage:
+    z86 init                          Setup project (deps + data + test)
+    z86 doctor                        Check environment health
+    z86 train [--config X] [--name N] Start training
+    z86 versions [--detail] [--scan]  List model versions
+    z86 diff v1 v2                    Compare two versions
+    z86 delete <version>              Delete a version
+    z86 eval [version] [--quick]      Evaluate a version
+    z86 generate [version] "prompt"   Generate text
+    z86 generate [version] -i         Interactive REPL
+    z86 serve [version] --port 8080   HTTP inference API
+    z86 ablation run|status|compare   Ablation studies
+    z86 dashboard [--prod]            Start dashboard
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="z86",
+        description="HCLM-D training, versioning, eval, and generation CLI",
+    )
+    sub = p.add_subparsers(dest="command")
+
+    # ── init ──
+    sub.add_parser("init", help="Setup project (deps + data + smoke test)")
+
+    # ── doctor ──
+    sub.add_parser("doctor", help="Check environment health")
+
+    # ── train ──
+    train_p = sub.add_parser("train", help="Start or resume training")
+    train_p.add_argument("--config", default="configs/base.yaml", help="Config path or name")
+    train_p.add_argument("--resume", default=None, help="Version id or checkpoint to resume from")
+    train_p.add_argument("--name", default=None, help="Run name")
+    train_p.add_argument("--dashboard", default=None, help="Dashboard URL")
+
+    # ── versions ──
+    ver_p = sub.add_parser("versions", help="List model versions")
+    ver_p.add_argument("--detail", action="store_true", help="Show extended info")
+    ver_p.add_argument("--scan", action="store_true", help="Scan for unregistered checkpoints")
+
+    # ── diff ──
+    diff_p = sub.add_parser("diff", help="Compare two versions")
+    diff_p.add_argument("version_a", help="First version id")
+    diff_p.add_argument("version_b", help="Second version id")
+
+    # ── delete ──
+    del_p = sub.add_parser("delete", help="Delete a version")
+    del_p.add_argument("version_id", help="Version to delete")
+    del_p.add_argument("--keep-file", action="store_true", help="Keep checkpoint file")
+
+    # ── eval ──
+    eval_p = sub.add_parser("eval", help="Evaluate a version")
+    eval_p.add_argument("version", nargs="?", default=None, help="Version id, 'latest', 'best', or path")
+    eval_p.add_argument("--config", default=None, help="Config override")
+    eval_p.add_argument("--quick", action="store_true", help="Skip perplexity")
+    eval_p.add_argument("--judge", action="store_true", help="Enable LLM judge")
+    eval_p.add_argument("--dashboard", action="store_true", help="Send to dashboard")
+    eval_p.add_argument("--prompts", nargs="+", default=None, help="Custom prompts")
+
+    # ── generate ──
+    gen_p = sub.add_parser("generate", help="Generate text")
+    gen_p.add_argument("version", nargs="?", default=None, help="Version id or path")
+    gen_p.add_argument("prompt", nargs="?", default=None, help="Generation prompt")
+    gen_p.add_argument("-i", "--interactive", action="store_true", help="Interactive REPL")
+    gen_p.add_argument("--config", default=None)
+    gen_p.add_argument("--seq_len", type=int, default=256)
+    gen_p.add_argument("--steps", type=int, default=64)
+    gen_p.add_argument("--temperature", type=float, default=0.8)
+    gen_p.add_argument("--n_samples", type=int, default=1)
+
+    # ── serve ──
+    serve_p = sub.add_parser("serve", help="Start inference HTTP server")
+    serve_p.add_argument("version", nargs="?", default=None, help="Version id or path")
+    serve_p.add_argument("--config", default=None)
+    serve_p.add_argument("--port", type=int, default=8080)
+
+    # ── ablation ──
+    abl_p = sub.add_parser("ablation", help="Ablation studies")
+    abl_p.add_argument("sub", choices=["run", "status", "compare"], help="Subcommand")
+    abl_p.add_argument("--only", nargs="*", default=None, help="Only run specific ablations")
+
+    # ── dashboard ──
+    dash_p = sub.add_parser("dashboard", help="Start monitoring dashboard")
+    dash_p.add_argument("--port", type=int, default=None, help="Server port")
+    dash_p.add_argument("--prod", action="store_true", help="Production mode")
+
+    return p
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        return 0
+
+    # Lazy import commands to keep startup fast
+    if args.command == "init":
+        from cli.cmd_init import cmd_init
+        return cmd_init(args)
+
+    elif args.command == "doctor":
+        from cli.cmd_init import cmd_doctor
+        return cmd_doctor(args)
+
+    elif args.command == "train":
+        from cli.cmd_train import cmd_train
+        return cmd_train(args)
+
+    elif args.command == "versions":
+        from cli.cmd_versions import cmd_versions
+        return cmd_versions(args)
+
+    elif args.command == "diff":
+        from cli.cmd_versions import cmd_diff
+        return cmd_diff(args)
+
+    elif args.command == "delete":
+        from cli.cmd_versions import cmd_delete
+        return cmd_delete(args)
+
+    elif args.command == "eval":
+        from cli.cmd_eval import cmd_eval
+        return cmd_eval(args)
+
+    elif args.command == "generate":
+        from cli.cmd_generate import cmd_generate
+        return cmd_generate(args)
+
+    elif args.command == "serve":
+        from cli.cmd_generate import cmd_serve
+        return cmd_serve(args)
+
+    elif args.command == "ablation":
+        from cli.cmd_ablation import cmd_ablation
+        return cmd_ablation(args)
+
+    elif args.command == "dashboard":
+        from cli.cmd_dashboard import cmd_dashboard
+        return cmd_dashboard(args)
+
+    else:
+        parser.print_help()
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)

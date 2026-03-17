@@ -133,6 +133,20 @@ app.get("/api/evals/compare", (c) => {
   return c.json(getEvalComparison(runs));
 });
 
+// --- Version registry (reads checkpoints/manifest.json) ---
+
+app.get("/api/versions", (c) => {
+  try {
+    const manifestPath = join(import.meta.dir, "..", "..", "checkpoints", "manifest.json");
+    const file = Bun.file(manifestPath);
+    if (!file.size) return c.json({ versions: [] });
+    const data = JSON.parse(await file.text());
+    return c.json(data);
+  } catch {
+    return c.json({ versions: [] });
+  }
+});
+
 // Health check
 app.get("/api/health", (c) => {
   return c.json({ status: "ok", uptime: process.uptime() });

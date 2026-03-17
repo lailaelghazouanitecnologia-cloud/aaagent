@@ -9,6 +9,7 @@ const navItems = [
   { to: "/hierarchy", label: "Hierarchy" },
   { to: "/generation", label: "Generation" },
   { to: "/evals", label: "Evals" },
+  { to: "/versions", label: "Versions" },
   { to: "/ablations", label: "Ablations" },
 ];
 

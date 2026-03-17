@@ -33,8 +33,11 @@ dev = [
     "ruff>=0.1",
 ]
 
+[project.scripts]
+z86 = "cli.main:main"
+
 [tool.setuptools.packages.find]
-include = ["model*", "data*", "diffusion*", "losses*", "meta*", "training*", "eval*"]
+include = ["model*", "data*", "diffusion*", "losses*", "meta*", "training*", "eval*", "cli*"]
 
 [tool.ruff]
 line-length = 100
