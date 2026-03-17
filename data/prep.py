@@ -73,17 +73,24 @@ def tokenize_corpus(
     tokenizer = load_tokenizer(tokenizer_path)
 
     logger.info("Tokenizing %s...", text_file)
+    file_size = Path(text_file).stat().st_size
     with open(text_file, "r", encoding="utf-8") as f:
         text = f.read()
 
     # Tokenize in chunks to avoid memory issues
     chunk_size = 1_000_000  # characters
+    total_chunks = (len(text) + chunk_size - 1) // chunk_size
     all_ids: list[int] = []
 
-    for start in range(0, len(text), chunk_size):
+    for i, start in enumerate(range(0, len(text), chunk_size)):
         chunk = text[start : start + chunk_size]
         encoding = tokenizer.encode(chunk)
         all_ids.extend(encoding.ids)
+        pct = (i + 1) / total_chunks * 100
+        logger.info(
+            "  Tokenizing: %d/%d chunks (%.0f%%) — %d tokens so far",
+            i + 1, total_chunks, pct, len(all_ids),
+        )
 
     token_tensor = torch.tensor(all_ids, dtype=torch.long)
 
