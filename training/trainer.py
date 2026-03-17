@@ -310,22 +310,42 @@ class Trainer:
             # Get routing info for auxiliary losses
             fine_centroids = None
             coarse_centroids = None
+            routing_weights = None
+            fine_to_coarse_weights = None
 
             if isinstance(self.model.embedding, CompositeEmbedding):
                 info = self.model.embedding.get_routing_info()
-                fine_centroids = info.get("fine_centroids")
-                if fine_centroids is not None:
-                    fine_centroids = fine_centroids.centroids
-                coarse_info = info.get("coarse_centroids")
-                if coarse_info is not None:
-                    coarse_centroids = coarse_info.centroids
+                fine_centroids_mod = info.get("fine_centroids")
+                if fine_centroids_mod is not None:
+                    fine_centroids = fine_centroids_mod.centroids
+                coarse_centroids_mod = info.get("coarse_centroids")
+                if coarse_centroids_mod is not None:
+                    coarse_centroids = coarse_centroids_mod.centroids
+                # Cached routing weights from forward pass
+                routing_weights = info.get("fine_weights")
+                fine_to_coarse_weights = info.get("coarse_weights")
+                # For hierarchy loss: we need [K, M] mapping (average coarse
+                # assignment per fine cluster). Approximate from batch data.
+                if (
+                    routing_weights is not None
+                    and fine_to_coarse_weights is not None
+                ):
+                    # routing_weights: [B, S, K], fine_to_coarse_weights: [B, S, M]
+                    # Compute: for each fine cluster k, average coarse assignment
+                    # fine_to_coarse: [K, M] = (routing^T @ coarse) / routing.sum
+                    rw_flat = routing_weights.reshape(-1, routing_weights.shape[-1])  # [N, K]
+                    cw_flat = fine_to_coarse_weights.reshape(-1, fine_to_coarse_weights.shape[-1])  # [N, M]
+                    fine_to_coarse_weights = torch.matmul(rw_flat.T, cw_flat)  # [K, M]
+                    fine_to_coarse_weights = fine_to_coarse_weights / (rw_flat.sum(dim=0, keepdim=True).T + 1e-8)
 
             loss_output = self.criterion(
                 logits=logits,
                 targets=input_ids,
                 mask=mask,
+                routing_weights=routing_weights,
                 fine_centroids=fine_centroids,
                 coarse_centroids=coarse_centroids,
+                fine_to_coarse_weights=fine_to_coarse_weights,
             )
 
         # Backward
@@ -396,16 +416,38 @@ class Trainer:
         if isinstance(self._raw_model.embedding, CompositeEmbedding):
             try:
                 info = self._raw_model.embedding.get_routing_info()
-                gate_info = info.get("gate_value")
-                if gate_info is not None:
-                    gate_val = gate_info if isinstance(gate_info, (int, float)) else gate_info.mean().item()
-                    cluster_info = f" | gate: {gate_val:.3f}"
+                parts = []
+
+                # Gate statistics
+                gate_values = info.get("gate_values")
+                if gate_values is not None:
+                    parts.append(f"gate: {gate_values.mean().item():.3f}±{gate_values.std().item():.3f}")
+
+                # Alpha and beta (learned mixing weights)
+                alpha = info.get("alpha")
+                beta = info.get("beta")
+                if alpha is not None:
+                    parts.append(f"α: {alpha.item():.4f}")
+                if beta is not None:
+                    parts.append(f"β: {beta.item():.4f}")
+
+                # Router entropy (measures cluster specialization)
+                fine_weights = info.get("fine_weights")
+                if fine_weights is not None:
+                    # H = -sum(p * log(p)), max = log2(K)
+                    eps = 1e-8
+                    entropy = -(fine_weights * (fine_weights + eps).log2()).sum(dim=-1).mean()
+                    max_entropy = torch.tensor(fine_weights.shape[-1], dtype=torch.float32).log2()
+                    parts.append(f"H_router: {entropy.item():.2f}/{max_entropy.item():.2f}")
+
+                if parts:
+                    cluster_info = " | " + " | ".join(parts)
             except Exception:
                 pass
 
         logger.info(
-            "Step %d | Loss: %.4f (diff: %.4f, bal: %.4f, div: %.4f, hier: %.4f) "
-            "| %.0f tok/s | GPU: %.1fGB%s",
+            "Step %d | Loss: %.4f (diff: %.4f, bal: %.4f, div: %.4f, hier: %.4f)"
+            " | %.0f tok/s | GPU: %.1fGB%s",
             self.global_step,
             loss_output.total.item(),
             loss_output.diffusion.item(),

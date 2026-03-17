@@ -102,6 +102,11 @@ class CompositeEmbedding(nn.Module):
         self.alpha = nn.Parameter(torch.tensor(alpha_init))
         self.beta = nn.Parameter(torch.tensor(beta_init))
 
+        # Cached routing info from last forward pass (for loss computation)
+        self._cached_fine_weights: torch.Tensor | None = None
+        self._cached_coarse_weights: torch.Tensor | None = None
+        self._cached_gate_values: torch.Tensor | None = None
+
     @property
     def weight(self) -> torch.Tensor:
         return self.local_embedding.weight
@@ -126,13 +131,16 @@ class CompositeEmbedding(nn.Module):
         # Fine cluster assignment
         fine_weights = self.fine_router(e_local)  # [..., K]
         e_cluster = self.fine_centroids(fine_weights)  # [..., D]
+        self._cached_fine_weights = fine_weights.detach()
 
         # Coarse (hierarchical) cluster assignment — bottom-up from fine
         if self.use_hierarchy and self.coarse_router is not None:
             coarse_weights = self.coarse_router(e_cluster)  # [..., M]
             e_hier = self.coarse_centroids(coarse_weights)  # [..., D]
+            self._cached_coarse_weights = coarse_weights.detach()
         else:
             e_hier = torch.zeros_like(e_local)
+            self._cached_coarse_weights = None
 
         # Structural component
         structural = self.alpha * e_cluster + self.beta * e_hier
@@ -140,8 +148,10 @@ class CompositeEmbedding(nn.Module):
         # Gate
         if self.gate is not None:
             g = self.gate(e_local, override_value=gate_override)
+            self._cached_gate_values = g.detach()
             z = e_local + g * structural
         else:
+            self._cached_gate_values = None
             z = e_local + structural
 
         # Positional encoding (added after, position-independent routing)
@@ -151,14 +161,21 @@ class CompositeEmbedding(nn.Module):
         return z
 
     def get_routing_info(self) -> dict:
-        """Return routing information for monitoring and loss computation."""
+        """Return routing information for monitoring and loss computation.
+
+        Returns both model components and cached per-batch routing tensors
+        from the last forward pass.
+        """
         info = {
             "fine_centroids": self.fine_centroids,
+            "coarse_centroids": self.coarse_centroids,
             "alpha": self.alpha,
             "beta": self.beta,
+            # Cached tensors from last forward pass (detached)
+            "fine_weights": self._cached_fine_weights,
+            "coarse_weights": self._cached_coarse_weights,
+            "gate_values": self._cached_gate_values,
         }
         if self.gate is not None:
             info["gate"] = self.gate
-        if self.coarse_centroids is not None:
-            info["coarse_centroids"] = self.coarse_centroids
         return info
