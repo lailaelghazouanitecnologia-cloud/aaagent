@@ -8,14 +8,9 @@ from __future__ import annotations
 
 import os
 
-import requests
-
-
-GROQ_API_URL = "https://api.groq.com/openai/v1"
-
 
 def check_api_key() -> tuple[bool, str]:
-    """Validate GROQ_API_KEY by listing models.
+    """Validate GROQ_API_KEY by listing models via the Groq SDK.
 
     Returns:
         (success, detail) — detail is model count on success, error message on failure.
@@ -25,15 +20,11 @@ def check_api_key() -> tuple[bool, str]:
         return False, "GROQ_API_KEY not set"
 
     try:
-        resp = requests.get(
-            f"{GROQ_API_URL}/models",
-            headers={"Authorization": f"Bearer {key}"},
-            timeout=10,
-        )
-        if resp.status_code == 401:
-            return False, "Invalid API key"
-        resp.raise_for_status()
-        models = resp.json().get("data", [])
-        return True, f"{len(models)} models available"
-    except requests.RequestException as e:
+        from groq import Groq
+
+        client = Groq(api_key=key, timeout=10)
+        models = client.models.list()
+        count = len(models.data)
+        return True, f"{count} models available"
+    except Exception as e:
         return False, f"Connection error: {e}"

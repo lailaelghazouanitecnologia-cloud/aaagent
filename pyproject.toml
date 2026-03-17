@@ -27,6 +27,9 @@ eval = [
     "agno>=1.0",
     "groq>=0.4",
 ]
+cloud = [
+    "paramiko>=3.4",
+]
 dev = [
     "pytest>=7.4",
     "pytest-cov>=4.1",

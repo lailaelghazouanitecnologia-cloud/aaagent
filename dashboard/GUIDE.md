@@ -300,7 +300,7 @@ Evaluación determinista sobre 30 prompts curados en 6 categorías:
 
 ### LLM Judge (Groq)
 
-6 dimensiones evaluadas por `llama-3.3-70b-versatile`:
+6 dimensiones evaluadas por `moonshotai/kimi-k2-instruct-0905` (via Groq SDK):
 
 | Dimensión | Escala | Descripción |
 |-----------|--------|-------------|
@@ -407,7 +407,7 @@ config = "configs/base.yaml"          # Los YAML siguen siendo la fuente primari
 default_preset = "train-fast"
 
 [cloud.groq]
-model = "llama-3.3-70b-versatile"
+model = "moonshotai/kimi-k2-instruct-0905"
 
 [wandb]
 project = "hclm-d"
@@ -479,7 +479,7 @@ z86 versions
 | CLI | Python argparse + ANSI terminal UI |
 | Training | PyTorch 2.1+ / bfloat16 / torch.compile |
 | Eval (auto) | Python (distinct-n, self-BLEU, repetition) |
-| Eval (LLM) | Groq API (llama-3.3-70b-versatile) |
+| Eval (LLM) | Groq API (moonshotai/kimi-k2-instruct-0905) |
 | Eval (agent) | Agno framework |
 | Runtime | Bun 1.1+ |
 | API | Hono 4.6 |

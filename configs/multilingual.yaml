@@ -118,7 +118,7 @@ cloud:
     domain: "z86.dev"
     proxied: true
   groq:
-    model: "llama-3.3-70b-versatile"
+    model: "moonshotai/kimi-k2-instruct-0905"
     max_retries: 3
     delay_between_calls: 0.5
 

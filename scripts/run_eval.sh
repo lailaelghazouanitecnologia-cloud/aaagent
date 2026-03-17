@@ -8,7 +8,7 @@
 #
 # Options (env vars):
 #   GROQ_API_KEY     — Required for LLM-as-judge
-#   GROQ_MODEL       — Default: llama-3.3-70b-versatile
+#   GROQ_MODEL       — Default: moonshotai/kimi-k2-instruct-0905
 #   DASHBOARD_URL    — Optional, e.g. https://z86.dev
 #   EVAL_DEVICE      — Default: cuda
 #   EVAL_SEQ_LEN     — Default: 256
@@ -35,7 +35,7 @@ echo "  Device:      ${DEVICE}"
 echo "  Seq length:  ${SEQ_LEN}"
 echo "  Steps:       ${STEPS}"
 echo "  Temperature: ${TEMP}"
-echo "  Groq model:  ${GROQ_MODEL:-llama-3.3-70b-versatile}"
+echo "  Groq model:  ${GROQ_MODEL:-moonshotai/kimi-k2-instruct-0905}"
 echo ""
 
 # Ensure deps

@@ -36,7 +36,7 @@ def build_eval_agent():
     from agno.agent import Agent
     from agno.models.groq import Groq
 
-    model_id = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+    model_id = os.environ.get("GROQ_MODEL", "moonshotai/kimi-k2-instruct-0905")
 
     agent = Agent(
         name="HCLM-D Evaluator",

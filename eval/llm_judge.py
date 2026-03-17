@@ -1,4 +1,4 @@
-"""LLM-as-Judge evaluation via Groq API (used by the Agno agent).
+"""LLM-as-Judge evaluation via Groq SDK.
 
 Sends each generated sample to an LLM with a structured rubric
 and parses back numerical scores + reasoning.
@@ -13,12 +13,11 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-import requests
+from groq import Groq
 
 logger = logging.getLogger(__name__)
 
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "moonshotai/kimi-k2-instruct-0905")
 
 # ---------------------------------------------------------------------------
 # Rubric prompt
@@ -64,7 +63,7 @@ def _build_user_msg(prompt: str, generated: str, category: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Groq API caller
+# Groq SDK caller
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -98,38 +97,29 @@ def call_groq(
         return JudgeResult(reasoning="API key missing")
 
     model = model or GROQ_MODEL
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": JUDGE_SYSTEM},
-            {"role": "user", "content": _build_user_msg(prompt, generated, category)},
-        ],
-        "temperature": 0.0,
-        "max_tokens": 400,
-    }
+    client = Groq(api_key=api_key, timeout=timeout)
 
     for attempt in range(max_retries):
         try:
-            resp = requests.post(
-                GROQ_API_URL, headers=headers, json=payload, timeout=timeout
+            completion = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": JUDGE_SYSTEM},
+                    {"role": "user", "content": _build_user_msg(prompt, generated, category)},
+                ],
+                temperature=0.0,
+                max_tokens=400,
             )
-            if resp.status_code == 429:
-                wait = 2 ** (attempt + 1)
-                logger.warning(f"Groq rate-limited, retrying in {wait}s")
-                time.sleep(wait)
-                continue
-            resp.raise_for_status()
-
-            content = resp.json()["choices"][0]["message"]["content"]
+            content = completion.choices[0].message.content
             return _parse_judge_response(content)
 
-        except requests.RequestException as e:
+        except Exception as e:
             logger.warning(f"Groq request failed (attempt {attempt+1}): {e}")
-            if attempt < max_retries - 1:
+            if "rate_limit" in str(e).lower() or "429" in str(e):
+                wait = 2 ** (attempt + 1)
+                logger.warning(f"Rate-limited, retrying in {wait}s")
+                time.sleep(wait)
+            elif attempt < max_retries - 1:
                 time.sleep(2 ** attempt)
 
     return JudgeResult(reasoning="All retries exhausted")
@@ -137,7 +127,6 @@ def call_groq(
 
 def _parse_judge_response(raw: str) -> JudgeResult:
     """Parse the JSON response from the LLM judge."""
-    # Strip markdown code fences if present
     cleaned = raw.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.split("\n", 1)[-1]
@@ -212,13 +201,11 @@ def aggregate_judge_scores(results: list[JudgeResult]) -> dict[str, Any]:
     rep_vals = [r.repetition_score for r in successful]
     scores["mean_repetition_score"] = round(sum(rep_vals) / n, 3)
 
-    # Failure mode distribution
     modes: dict[str, int] = {}
     for r in successful:
         modes[r.failure_mode] = modes.get(r.failure_mode, 0) + 1
     scores["failure_modes"] = modes
 
-    # Overall quality score (mean of all dimensions)
     all_means = [scores[f"mean_{d}"] for d in dims]
     scores["overall_quality"] = round(sum(all_means) / len(all_means), 2)
 
