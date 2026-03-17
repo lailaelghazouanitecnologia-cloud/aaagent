@@ -537,84 +537,49 @@ ssh root@<IP> sqlite3 /opt/z86-dashboard/data/metrics.db ".tables"
 
 ---
 
-## 12. Arquitectura de Infraestructura Recomendada
+## 12. Optimización de Costes en RunPod
 
-### Separar CPU y GPU: Vultr + RunPod
+### Tu pod RunPod ya incluye CPU potente
+
+Los pods GPU de RunPod vienen con vCPUs y RAM generosas (ej. 25 vCPU, 50GB RAM con RTX 3090). El prep tarda pocos minutos con esas CPUs, así que **no necesitas un servidor separado**.
+
+### Flujo recomendado: todo en RunPod
 
 ```
 ┌─────────────────────────────────────────┐
-│           VULTR CPU ($6-10/mes)          │
+│         RUNPOD GPU ($0.22/h)             │
 │                                         │
-│  ├── Tokenización (prep, una sola vez)  │
-│  ├── Almacén de tokens (~2GB)           │
-│  ├── Dashboard (Bun + SQLite) 24/7      │
-│  ├── Cloudflare DNS → z86.dev           │
-│  └── Checkpoints guardados              │
-└────────────────┬────────────────────────┘
-                 │
-        scp/rsync tokens (~2GB, una vez por sesión)
-        métricas en tiempo real (KB/min)
-        checkpoints al terminar
-                 │
-┌────────────────▼────────────────────────┐
-│       RUNPOD GPU (solo al entrenar)      │
-│                                         │
-│  ├── Descargar tokens de Vultr           │
-│  ├── Entrenar → GPU al 80% desde min 1  │
-│  ├── Enviar métricas al dashboard        │
-│  └── Subir checkpoint → apagar           │
+│  1. git clone + pip install  (~3 min)   │
+│  2. Prep (tokenización)     (~15 min)   │
+│  3. Entrenar                (~4 horas)  │
+│  4. Guardar checkpoint                  │
+│  5. Apagar pod                          │
 └─────────────────────────────────────────┘
 ```
 
-### ¿Por qué esta separación?
-
-| Tarea | Usa GPU | Dónde hacerla | Coste |
-|-------|---------|---------------|-------|
-| Descargar TinyStories | No | Vultr | $0 (incluido) |
-| Entrenar tokenizer BPE | No | Vultr | $0 (incluido) |
-| Tokenizar corpus (~2M historias) | No | Vultr | $0 (incluido) |
-| Dashboard 24/7 | No | Vultr | $0 (incluido) |
-| **Entrenar modelo** | **Sí** | **RunPod** | **$0.22/h** |
-| **Generar texto** | **Sí** | **RunPod** | **$0.22/h** |
-
-**Ahorro:** ~$0.10-0.15 por sesión de GPU ociosa evitada. Si haces 3+ sesiones/mes, Vultr se paga solo.
-
-### Vultr: plan recomendado
-
-| Plan | vCPU | RAM | Disco | Precio | Suficiente |
-|------|------|-----|-------|--------|------------|
-| High Frequency | 1 vCPU | 2GB | 32GB | **$6/mes** | Sí, para dashboard + tokens |
-| Regular Cloud | 1 vCPU | 2GB | 55GB | **$10/mes** | Sí, con más disco |
-
-### Setup del Vultr (una sola vez)
+### Comandos de una sesión completa
 
 ```bash
-# 1. Crear instancia Ubuntu 22.04 en Vultr
-# 2. SSH al servidor
-
-# Instalar dependencias
-apt update && apt install -y python3-pip git
-curl -fsSL https://bun.sh/install | bash
-source ~/.bashrc
-
-# Clonar repo
-cd /opt
+# ── PASO 1: Setup (solo la primera vez) ──
+cd /workspace
 git clone https://github.com/lailaelghazouanitecnologia-cloud/aaagent.git
 cd aaagent
-
-# Instalar Python deps y hacer prep
 pip install ".[dev]"
+
+# ── PASO 2: Prep (solo la primera vez, o si no hay tokens) ──
 python scripts/train.py --config configs/base.yaml --phase prep
-# Esperar 15-45 min → genera train_tokens.pt, val_tokens.pt, tokenizer.json
 
-# Arrancar dashboard
-cd dashboard
-bun install
-NODE_ENV=production bun run start &
+# ── PASO 3: Entrenar ──
+python scripts/train.py --config configs/base.yaml --phase train
 
-# (Opcional) Configurar systemd para que arranque solo
-# Ver sección 8 de esta guía para deploy con nginx + systemd
+# ── PASO 4: Guardar checkpoint y apagar ──
+# Los checkpoints quedan en el volumen si tienes uno montado
 ```
+
+### Tip: usa volumen persistente
+
+Si montas un volumen en `/workspace`, los tokens y checkpoints persisten entre sesiones.
+Así la segunda vez no necesitas repetir prep ni pip install.
 
 ### Datos que genera el prep
 
@@ -622,68 +587,28 @@ NODE_ENV=production bun run start &
 data/
 ├── tinystories/
 │   ├── train.txt          ~1.9GB   (texto crudo, borrable después)
-│   └── validation.txt     ~20MB    (texto crudo, borrable después)
-├── tokenizer.json         ~200KB   ← GUARDAR (vocabulario BPE)
-├── train_tokens.pt        ~2GB     ← GUARDAR (tensor entrenamiento)
-└── val_tokens.pt          ~20MB    ← GUARDAR (tensor validación)
+│   └── val.txt            ~20MB    (texto crudo, borrable después)
+│   ├── train_tokens.pt    ~2GB     ← tensor de entrenamiento
+│   └── val_tokens.pt      ~20MB    ← tensor de validación
+├── tokenizer.json         ~200KB   ← vocabulario BPE
 ```
 
 Los `.txt` se pueden borrar después para ahorrar disco:
 ```bash
-rm -f data/tinystories/train.txt data/tinystories/validation.txt
+rm -f data/tinystories/train.txt data/tinystories/val.txt
 # Ahorro: ~1.9GB
 ```
 
-### Flujo de una sesión de entrenamiento
+### GPU recomendada
 
-```bash
-# ── PASO 1: Encender pod RunPod RTX 3090 ──
+| GPU | VRAM | Precio/h | Mejor para |
+|-----|------|----------|------------|
+| RTX A5000 | 24GB | $0.16 | Más barata, suficiente para 20M params |
+| RTX 3090 | 24GB | $0.22 | Buen balance, más stock |
+| RTX 4090 | 24GB | $0.34 | Más rápida, misma VRAM |
+| A100 40GB | 40GB | $0.79 | Solo si necesitas batch más grande |
 
-# ── PASO 2: En el pod, descargar tokens desde Vultr (~2 min) ──
-cd /workspace
-git clone https://github.com/lailaelghazouanitecnologia-cloud/aaagent.git
-cd aaagent
-pip install ".[dev]"
-
-# Copiar tokens pre-generados desde Vultr
-scp root@<VULTR_IP>:/opt/aaagent/data/tokenizer.json data/
-scp root@<VULTR_IP>:/opt/aaagent/data/train_tokens.pt data/
-scp root@<VULTR_IP>:/opt/aaagent/data/val_tokens.pt data/
-
-# ── PASO 3: Entrenar (GPU al 80% desde minuto 1) ──
-export DASHBOARD_URL=https://z86.dev
-python scripts/train.py --config configs/base.yaml
-
-# ── PASO 4: Al terminar, guardar checkpoint en Vultr ──
-scp checkpoints/*.pt root@<VULTR_IP>:/opt/aaagent/checkpoints/
-
-# ── PASO 5: Apagar pod ──
-```
-
-### Comparación de costes: con y sin Vultr
-
-**Sin Vultr (todo en RunPod):**
-
-| Concepto | Coste |
-|----------|-------|
-| Prep en GPU (45 min × $0.22) | $0.16 |
-| Entrenamiento (4h × $0.22) | $0.88 |
-| Dashboard no disponible al apagar | — |
-| Tokens se pierden sin volumen | — |
-| **Total por sesión** | **$1.04** |
-
-**Con Vultr:**
-
-| Concepto | Coste |
-|----------|-------|
-| Vultr mensual | $6/mes |
-| Prep en Vultr | $0 (incluido) |
-| Entrenamiento en RunPod (4h × $0.22) | $0.88 |
-| Dashboard 24/7 | $0 (incluido) |
-| Tokens siempre disponibles | $0 (incluido) |
-| **Total por sesión** | **$0.88 + $6/mes** |
-
-Con 3+ sesiones/mes ya ahorras. Además tienes dashboard siempre visible y datos seguros.
+Para HCLM-D (20M params, batch 64): **cualquier GPU de 24GB sobra**.
 
 ### Checklist antes de encender el pod GPU
 
