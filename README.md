@@ -204,21 +204,38 @@ A small MLP (~500K params) that modulates gradient magnitude per parameter group
 
 ```
 hclm-d/
-│
 ├── README.md                       # This file
-├── pyproject.toml                  # Dependencies + project metadata
-├── Makefile                        # train, eval, test, ablation shortcuts
+├── pyproject.toml                  # Dependencies + z86 CLI entry point
+├── Makefile                        # Legacy shortcuts (prefer z86 CLI)
+│
+├── cli/                            # z86 unified CLI
+│   ├── main.py                     # Argparse entry point (11 subcommands)
+│   ├── ui.py                       # ANSI terminal output (ZARNETTI palette)
+│   ├── registry.py                 # Version manifest manager
+│   ├── cmd_init.py                 # z86 init / z86 doctor
+│   ├── cmd_train.py                # z86 train
+│   ├── cmd_versions.py             # z86 versions / diff / delete
+│   ├── cmd_eval.py                 # z86 eval
+│   ├── cmd_generate.py             # z86 generate / z86 serve
+│   ├── cmd_ablation.py             # z86 ablation
+│   └── cmd_dashboard.py            # z86 dashboard
 │
 ├── configs/
 │   ├── base.yaml                   # Default 20M config
-│   ├── ablations/
-│   │   ├── flat_baseline.yaml      # Standard flat embedding + diffusion
-│   │   ├── flat_autoregressive.yaml # Standard flat embedding + AR (reference)
-│   │   ├── clusters_only.yaml      # Fine clusters, no hierarchy
-│   │   ├── no_gate.yaml            # Clusters + hierarchy, no gate
-│   │   ├── no_meta.yaml            # Full structure, standard AdamW
-│   │   └── full.yaml               # Everything enabled
-│   └── sweep.yaml                  # Hyperparameter sweep ranges
+│   └── ablations/                  # A0–A5 ablation configs
+│
+├── dashboard/                      # Web dashboard (Bun + Hono + React)
+│   ├── server/                     # API server + SQLite + WebSocket
+│   │   ├── index.ts                # Hono routes + WS broadcast
+│   │   └── db.ts                   # SQLite (metrics + evals tables)
+│   ├── src/                        # React 19 + Vite 6 + Tailwind 4
+│   │   ├── app.tsx                 # Router (10 pages)
+│   │   ├── components/             # MetricCell, CanvasChart, Layout...
+│   │   ├── pages/                  # Overview, Losses, Clusters, Gate...
+│   │   └── lib/                    # API hooks, fetch helpers
+│   └── GUIDE.md                    # Full dashboard & CLI documentation
+│
+├── checkpoints/                    # Model checkpoints + manifest.json
 │
 ├── data/                           # Data loading and preprocessing
 ├── model/                          # Model architecture
@@ -228,7 +245,7 @@ hclm-d/
 ├── losses/                         # Loss functions
 ├── meta/                           # Optional meta-optimizer (Phase 5)
 ├── training/                       # Training loop and utilities
-├── eval/                           # Evaluation and analysis
+├── eval/                           # Evaluation pipeline + agent_eval.py
 ├── scripts/                        # Entry point scripts
 └── tests/                          # Unit tests
 ```
@@ -316,38 +333,102 @@ AdamW with:
 
 ## 10. Quick Start
 
+### Using the z86 CLI (recommended)
+
 ```bash
-# Setup
+# Install (registers the z86 command)
 pip install -e .
 
-# Prepare data
-python scripts/train.py --config configs/base.yaml --phase prep
+# Check environment (Python, torch, CUDA, GPU, Bun)
+z86 doctor
 
-# Train baseline (flat embedding + diffusion)
-python scripts/train.py --config configs/ablations/flat_baseline.yaml
+# Initialize project (install deps, prepare data, smoke test)
+z86 init
 
-# Train full model (hierarchical embedding + diffusion)
+# Train with default config
+z86 train base
+
+# Train and resume from a version
+z86 train base --resume v3
+
+# List model versions
+z86 versions
+
+# Compare two versions side-by-side
+z86 diff v1 v2
+
+# Evaluate a version (auto metrics + LLM judge)
+z86 eval v2
+
+# Generate text
+z86 generate v2 --prompt "Once upon a time"
+
+# Interactive generation REPL
+z86 generate v2 --interactive
+
+# Start HTTP generation server
+z86 serve v2 --port 8080
+
+# Run all ablations (A0–A5)
+z86 ablation run
+
+# Launch the web dashboard
+z86 dashboard
+```
+
+### Manual (scripts)
+
+```bash
+pip install -e .
 python scripts/train.py --config configs/base.yaml
-
-# Generate samples
 python scripts/generate.py --checkpoint checkpoints/best.pt --prompt "Once upon a time"
+```
 
-# Run all ablations
-python scripts/ablation_run.py
+### Dashboard
 
-# Visualize embeddings + clusters
-python scripts/visualize.py --checkpoint checkpoints/best.pt
+```bash
+cd dashboard && bun install && bun run dev
+# Open http://localhost:5173
+# API server at http://localhost:3000
+# WebSocket at ws://localhost:3000/ws
 ```
 
 ---
 
-## 11. License
+## 11. Dashboard & Eval Pipeline
+
+### Web Dashboard
+
+Real-time monitoring dashboard built with Bun + Hono + React 19 + Vite 6 + Tailwind 4. ZARNETTI terminal aesthetic (pure black, Geist Mono, dense panels).
+
+**10 pages**: Overview, Losses, Clusters, Gate, Hierarchy, Generation, Evals, Versions, Ablations
+
+**Key features**:
+- Real-time metrics via WebSocket
+- SQLite storage (WAL mode) for metrics and evals
+- Version registry browser with multi-select comparison
+- Eval results with radar charts, failure mode analysis, sample browser
+
+### Eval Pipeline
+
+Two-tier evaluation system:
+
+1. **Auto metrics**: distinct-n, self-BLEU, repetition ratio, keyword hit rate, vocab richness
+2. **LLM judge** (via Groq): coherence, fluency, relevance, creativity, consistency, instruction-following (1–5 scale)
+
+Results are posted to `POST /api/evals` and displayed on the `/evals` dashboard page.
+
+See `dashboard/GUIDE.md` for complete API reference, CLI documentation, and deployment guide.
+
+---
+
+## 12. License
 
 Apache 2.0
 
 ---
 
-## 12. Citation
+## 13. Citation
 
 ```bibtex
 @misc{hclmd2026,

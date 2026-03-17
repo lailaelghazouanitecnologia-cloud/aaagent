@@ -1,221 +1,266 @@
-# z86.dev — HCLM-D Training Dashboard
+# z86.dev — HCLM-D Platform Guide
 
-## Guía Completa
-
----
-
-## 1. Arquitectura
+## 1. Arquitectura General
 
 ```
-Training Loop (Python/GPU)
-    │
-    │  POST /api/metrics  (HTTP)
-    ▼
-┌──────────────────────────────────┐
-│  Bun Server (Hono)               │
-│  ├─ REST API   → SQLite (WAL)   │
-│  └─ WebSocket  → broadcast       │
-└──────────┬───────────────────────┘
-           │
-    ┌──────▼──────┐
-    │  React SPA  │  ← Vite (dev) / nginx (prod)
-    │  Tailwind 4 │
-    │  Radix UI   │
-    │  Recharts   │
-    │  Visx       │
-    └─────────────┘
-
-Producción:
-  Cloudflare (DNS + edge) → nginx (SSL + proxy) → Bun (:3000)
-```
-
----
-
-## 2. Estructura de Archivos
-
-```
-dashboard/
-├── server/
-│   ├── index.ts              # API + WebSocket (Hono en Bun)
-│   └── db.ts                 # SQLite schema, queries, prepared statements
-│
-├── src/
-│   ├── index.html            # Entry HTML (z86.dev, Inter + JetBrains Mono)
-│   ├── index.css             # Tailwind 4 + oklch theme + animaciones
-│   ├── main.tsx              # React 19 entry
-│   ├── app.tsx               # React Router (7 rutas)
-│   │
-│   ├── lib/
-│   │   ├── api.ts            # fetch helpers + connectWS()
-│   │   └── hooks.ts          # useRuns, useMetrics, useRealtimeMetrics
-│   │
-│   ├── components/
-│   │   ├── layout.tsx        # Sidebar + Outlet
-│   │   ├── metric-card.tsx   # KPI card con trend
-│   │   ├── run-selector.tsx  # Radix Select dropdown
-│   │   └── charts/
-│   │       ├── loss-chart.tsx       # Recharts — loss curves
-│   │       ├── cluster-heatmap.tsx  # Visx — similarity matrix
-│   │       └── gate-histogram.tsx   # Recharts — histograma + area
-│   │
-│   └── pages/
-│       ├── overview.tsx      # KPIs + loss + throughput (real-time)
-│       ├── losses.tsx        # 4 losses individuales + combinada
-│       ├── clusters.tsx      # Entropy, dead clusters, heatmap
-│       ├── gate.tsx          # Gate mean/std evolution + distribución
-│       ├── hierarchy.tsx     # Coarse-fine alignment + balance
-│       ├── generation.tsx    # Samples generados por checkpoint
-│       └── ablations.tsx     # Tabla comparativa + overlay de runs
-│
-├── deploy/
-│   ├── nginx.conf            # Reverse proxy z86.dev
-│   ├── z86-dashboard.service # Systemd unit
-│   ├── deploy.sh             # Deploy automatizado por SSH
-│   └── cloudflare-setup.md   # Guía DNS + SSL
-│
-├── package.json
-├── tsconfig.json
-├── vite.config.ts
-├── start.sh                  # Dev/prod launcher
-├── .env.example
-└── .gitignore
-
-training/
-└── dashboard_reporter.py     # Python reporter para el training loop
+                    ┌──────────────────────────────┐
+                    │         z86 CLI               │
+                    │  z86 init / train / eval /    │
+                    │  versions / generate / serve  │
+                    └──────────┬───────────────────┘
+                               │
+              ┌────────────────┼────────────────────┐
+              │                │                    │
+    ┌─────────▼──────┐  ┌─────▼──────┐   ┌────────▼────────┐
+    │  Training Loop │  │ Eval Agent │   │  Version        │
+    │  (PyTorch/GPU) │  │ (auto +    │   │  Registry       │
+    │                │  │  LLM judge)│   │  manifest.json  │
+    └───────┬────────┘  └─────┬──────┘   └────────┬────────┘
+            │                 │                    │
+     POST /api/metrics  POST /api/evals    GET /api/versions
+            │                 │                    │
+    ┌───────▼─────────────────▼────────────────────▼───┐
+    │              Bun Server (Hono)                    │
+    │  ├─ REST API  → SQLite (WAL)                     │
+    │  ├─ WebSocket → broadcast                        │
+    │  └─ Static    → Vite build                       │
+    └───────────────────┬──────────────────────────────┘
+                        │
+              ┌─────────▼─────────┐
+              │    React SPA      │
+              │  Tailwind 4       │
+              │  Radix UI         │
+              │  Recharts + Canvas│
+              └───────────────────┘
 ```
 
 ---
 
-## 3. Quick Start (Desarrollo)
+## 2. z86 CLI — Referencia Completa
 
-### Prerrequisitos
+El CLI se instala con `pip install -e .` y queda disponible como `z86`.
 
-- [Bun](https://bun.sh/) >= 1.1
-- Python >= 3.10 (para el reporter)
+### Comandos
 
-### Arrancar el dashboard
+| Comando | Descripción |
+|---------|-------------|
+| `z86 init` | Setup completo: deps + datos + smoke test |
+| `z86 doctor` | Verifica GPU, deps, datos, dashboard, env vars |
+| `z86 train` | Entrena modelo (--config, --resume, --name, --dashboard) |
+| `z86 versions` | Lista versiones registradas (--detail, --scan) |
+| `z86 diff v1 v3` | Compara métricas entre dos versiones |
+| `z86 delete v2` | Elimina versión (--keep-file para mantener checkpoint) |
+| `z86 eval v3` | Evalúa una versión (--quick, --judge, --dashboard) |
+| `z86 generate v3 "prompt"` | Genera texto (--interactive para REPL) |
+| `z86 serve v3` | API HTTP de inferencia (--port 8080) |
+| `z86 ablation run` | Ejecuta ablaciones A0-A5 (status, compare) |
+| `z86 dashboard` | Arranca dashboard (--prod, --port) |
+
+### Flujo típico
 
 ```bash
-cd dashboard
-bun install
-bun run dev
+# Primera vez
+z86 init                                  # ~30 min (descarga datos)
+
+# Entrenar
+z86 train --name "base-run"               # Ctrl+C para parar
+z86 train --config fast --name "fast-run"  # Config rápida
+z86 train --resume v1 --name "continue"    # Retomar versión
+
+# Gestionar versiones
+z86 versions                              # Ver tabla
+z86 versions --scan                       # Registrar checkpoints huérfanos
+z86 diff v1 v3                            # Comparar métricas
+
+# Evaluar
+z86 eval v3                               # Eval completa
+z86 eval v3 --quick                       # Sin perplexity (rápido)
+z86 eval v3 --judge --dashboard           # Con LLM judge, enviar a dashboard
+
+# Generar
+z86 generate v3 "Once upon a time"        # Un sample
+z86 generate v3 -i                        # REPL interactivo
+z86 serve v3 --port 8080                  # API HTTP
+
+# Dashboard
+z86 dashboard                             # Dev (:3000 + :5173)
+z86 dashboard --prod                      # Producción (:3000)
 ```
 
-Esto lanza:
-- **API + WebSocket**: http://localhost:3000
-- **Frontend (Vite HMR)**: http://localhost:5173
+### Version Registry
 
-### Enviar métricas de prueba
+Las versiones se almacenan en `checkpoints/manifest.json`:
 
-```bash
-# Métrica individual
-curl -X POST http://localhost:3000/api/metrics \
-  -H "Content-Type: application/json" \
-  -d '{
-    "run": "test-run",
-    "step": 1,
-    "losses": {"total": 5.23, "diffusion": 5.20, "balance": 0.02, "diversity": 0.005, "hierarchy": 0.005},
-    "cluster_health": {"entropy_ratio": 0.75, "dead_clusters": 2, "centroid_similarity": 0.34},
-    "gate": {"mean": 0.5, "std": 0.15},
-    "hierarchy": {"coarse_fine_alignment": 0.6, "balance": 0.8},
-    "throughput": {"tokens_per_sec": 35000, "gpu_memory_gb": 16.2, "gpu_utilization": 0.85}
-  }'
-
-# Batch
-curl -X POST http://localhost:3000/api/metrics/batch \
-  -H "Content-Type: application/json" \
-  -d '[
-    {"run": "test-run", "step": 2, "losses": {"total": 4.90}},
-    {"run": "test-run", "step": 3, "losses": {"total": 4.75}}
-  ]'
-
-# Health check
-curl http://localhost:3000/api/health
+```json
+{
+  "versions": [
+    {
+      "id": "v1",
+      "step": 14280,
+      "path": "checkpoints/step_14280.pt",
+      "run": "base-run",
+      "config": "base.yaml",
+      "loss": 0.847,
+      "ppl": 2.33,
+      "entropy": 0.87,
+      "gate_mean": 0.51,
+      "created": "2026-03-17T14:30:00Z",
+      "size_mb": 82
+    }
+  ]
+}
 ```
+
+- Se auto-registra al hacer Ctrl+C durante training
+- `z86 eval` actualiza las métricas automáticamente
+- `z86 versions --scan` detecta checkpoints no registrados
+
+---
+
+## 3. Dashboard — Páginas
+
+### Overview (`/`)
+- 8 KPI cards: Step, Loss total, Mejor loss, Throughput, Entropy ratio, Dead clusters, Gate mean, GPU memory
+- Loss curves (Recharts)
+- Throughput en tiempo real (WebSocket)
+
+### Losses (`/losses`)
+- 5 KPIs: Total + 4 auxiliares
+- Gráfico combinado + 4 individuales
+
+### Clusters (`/clusters`)
+- 3 KPIs: Entropy ratio, Dead clusters, Centroid similarity
+- Gráfico temporal + Heatmap de similaridad (Visx)
+
+### Gate (`/gate`)
+- 4 KPIs: Gate mean, std, ratio, step
+- Area chart evolución + Histograma distribución
+
+### Hierarchy (`/hierarchy`)
+- 3 KPIs: Coarse-fine alignment, Balance, L_hierarchy
+- Gráfico temporal de las 3 métricas
+
+### Generation (`/generation`)
+- Samples de texto generados en cada checkpoint
+- Muestra: step, prompt, texto, métricas por sample
+
+### Evals (`/evals`)
+- **Auto metrics**: Distinct-2, Repetition, Self-BLEU-4, Keyword hit, Vocab richness
+- **LLM judge**: Overall quality, Coherence, Grammar, Creativity, Fluency, Completeness
+- Radar chart de dimensiones LLM
+- Failure modes (bar chart)
+- Per-category breakdown (narration, dialogue, instruct, creative, technical, code_doc)
+- Timeline de calidad vs training steps
+- Browser de samples con scores inline
+
+### Versions (`/versions`)
+- Tabla de versiones con selección múltiple
+- Comparación visual por métrica (barras)
+- Timeline de loss por versión
+
+### Ablations (`/ablations`)
+- Multi-run selector
+- Tabla comparativa (TanStack Table)
+- Overlay de loss curves
 
 ---
 
 ## 4. API Reference
 
-### Ingestión
+### Training Metrics
 
 | Método | Ruta | Body | Respuesta |
 |--------|------|------|-----------|
 | `POST` | `/api/metrics` | `MetricPayload` | `{"ok": true}` |
 | `POST` | `/api/metrics/batch` | `MetricPayload[]` | `{"ok": true, "count": N}` |
-
-### Consulta
-
-| Método | Ruta | Params | Respuesta |
-|--------|------|--------|-----------|
 | `GET` | `/api/runs` | — | `["run1", "run2"]` |
 | `GET` | `/api/runs/:run/summary` | — | Resumen agregado |
 | `GET` | `/api/runs/:run/metrics` | `?from=0&limit=10000` | Array de métricas |
 | `GET` | `/api/runs/:run/latest` | — | Última métrica |
 | `GET` | `/api/compare` | `?runs=A0,A1,A2` | Métricas combinadas |
-| `GET` | `/api/health` | — | `{"status":"ok","uptime":N}` |
 
-### WebSocket
+### Evaluación
 
-```
-ws://localhost:3000/ws     (dev)
-wss://z86.dev/ws           (prod)
-```
+| Método | Ruta | Body | Respuesta |
+|--------|------|------|-----------|
+| `POST` | `/api/evals` | `EvalPayload` | `{"ok": true}` |
+| `GET` | `/api/evals/runs` | — | `["run1", "run2"]` |
+| `GET` | `/api/evals/:run` | — | Array de evals |
+| `GET` | `/api/evals/:run/latest` | — | Última eval |
+| `GET` | `/api/evals/compare` | `?runs=A0,A1` | Comparación |
 
-Mensajes del servidor → cliente:
-```json
-{"type": "metric", "data": { /* MetricPayload */ }}
-{"type": "batch", "count": 5}
-```
+### Versions
 
-El cliente se reconecta automáticamente cada 2s si se pierde la conexión.
+| Método | Ruta | Respuesta |
+|--------|------|-----------|
+| `GET` | `/api/versions` | `{"versions": [...]}` |
 
-### MetricPayload (schema completo)
+### Sistema
+
+| Método | Ruta | Respuesta |
+|--------|------|-----------|
+| `GET` | `/api/health` | `{"status":"ok","uptime":N}` |
+| `WS` | `/ws` | Real-time metric broadcasts |
+
+### MetricPayload
 
 ```typescript
 interface MetricPayload {
-  run: string;              // REQUERIDO — nombre del run (ej. "A2-clusters-only")
-  step: number;             // REQUERIDO — step actual
-
+  run: string;                    // REQUERIDO
+  step: number;                   // REQUERIDO
   losses?: {
-    total?: number;         // Loss total combinada
-    diffusion?: number;     // L_diffusion
-    balance?: number;       // L_balance (cluster load balancing)
-    diversity?: number;     // L_diversity
-    hierarchy?: number;     // L_hierarchy (coarse-fine)
+    total?: number;
+    diffusion?: number;
+    balance?: number;
+    diversity?: number;
+    hierarchy?: number;
   };
-
   cluster_health?: {
     entropy_ratio?: number;       // 0-1, >0.8 = saludable
-    dead_clusters?: number;       // Clusters sin asignaciones
-    centroid_similarity?: number; // Similaridad promedio entre centroides
+    dead_clusters?: number;
+    centroid_similarity?: number;
   };
+  gate?: { mean?: number; std?: number; };
+  hierarchy?: { coarse_fine_alignment?: number; balance?: number; };
+  throughput?: { tokens_per_sec?: number; gpu_memory_gb?: number; gpu_utilization?: number; };
+  extra?: Record<string, unknown>;
+}
+```
 
-  gate?: {
-    mean?: number;   // Media de activaciones del gate
-    std?: number;    // Desviación estándar
-  };
+### EvalPayload
 
-  hierarchy?: {
-    coarse_fine_alignment?: number;  // Score de alineación coarse→fine
-    balance?: number;                // Balance score jerárquico
+```typescript
+interface EvalPayload {
+  run: string;                    // REQUERIDO
+  step: number;                   // REQUERIDO
+  eval_type?: string;             // default: "bench_30"
+  auto_metrics?: {
+    distinct_1?: number;
+    distinct_2?: number;
+    distinct_3?: number;
+    repetition_ratio?: number;
+    self_bleu_4?: number;
+    keyword_hit?: number;
+    vocab_richness?: number;
+    length_compliance?: number;
+    banned_violations?: number;
+    total_tokens?: number;
+    unique_tokens?: number;
   };
-
-  throughput?: {
-    tokens_per_sec?: number;   // Throughput de entrenamiento
-    gpu_memory_gb?: number;    // Memoria GPU usada
-    gpu_utilization?: number;  // Uso GPU 0-1
+  llm_judge?: {
+    mean_coherence?: number;      // 1-5
+    mean_grammar?: number;
+    mean_relevance?: number;
+    mean_creativity?: number;
+    mean_fluency?: number;
+    mean_completeness?: number;
+    overall_quality?: number;
+    mean_repetition_score?: number;
+    failure_modes?: Record<string, number>;
   };
-
-  extra?: {
-    // Campos extensibles:
-    centroid_similarity_matrix?: number[][];  // Para heatmap en /clusters
-    gate_distribution?: number[];             // Para histograma en /gate
-    generated_sample?: string;                // Para /generation
-    prompt?: string;                          // Prompt del sample
-    sample_metrics?: Record<string, number>;  // Métricas del sample
-    [key: string]: unknown;
-  };
+  samples?: any[];
+  by_category?: Record<string, any>;
+  generation_time_s?: number;
 }
 ```
 
@@ -224,479 +269,236 @@ interface MetricPayload {
 ## 5. SQLite Schema
 
 ```sql
+-- Training metrics
 CREATE TABLE metrics (
-  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-  run                   TEXT NOT NULL,
-  step                  INTEGER NOT NULL,
-  timestamp             REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
-  -- Losses
-  loss_total            REAL,
-  loss_diffusion        REAL,
-  loss_balance          REAL,
-  loss_diversity        REAL,
-  loss_hierarchy        REAL,
-  -- Cluster health
-  entropy_ratio         REAL,
-  dead_clusters         INTEGER,
-  centroid_similarity   REAL,
-  -- Gate
-  gate_mean             REAL,
-  gate_std              REAL,
-  -- Hierarchy
-  coarse_fine_alignment REAL,
-  hierarchy_balance     REAL,
-  -- Throughput
-  tokens_per_sec        REAL,
-  gpu_memory_gb         REAL,
-  gpu_utilization       REAL,
-  -- Extensible
-  extra                 TEXT  -- JSON string
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run TEXT NOT NULL, step INTEGER NOT NULL,
+  timestamp REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
+  loss_total REAL, loss_diffusion REAL, loss_balance REAL,
+  loss_diversity REAL, loss_hierarchy REAL,
+  entropy_ratio REAL, dead_clusters INTEGER, centroid_similarity REAL,
+  gate_mean REAL, gate_std REAL,
+  coarse_fine_alignment REAL, hierarchy_balance REAL,
+  tokens_per_sec REAL, gpu_memory_gb REAL, gpu_utilization REAL,
+  extra TEXT
 );
 
--- Indexes
-CREATE INDEX idx_metrics_run_step ON metrics(run, step);
-CREATE INDEX idx_metrics_run ON metrics(run);
+-- Evaluation results
+CREATE TABLE evals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run TEXT NOT NULL, step INTEGER NOT NULL,
+  timestamp REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
+  eval_type TEXT NOT NULL DEFAULT 'bench_30',
+  distinct_1 REAL, distinct_2 REAL, distinct_3 REAL,
+  repetition_ratio REAL, self_bleu_4 REAL,
+  keyword_hit REAL, vocab_richness REAL, length_compliance REAL,
+  banned_violations INTEGER, total_tokens INTEGER, unique_tokens INTEGER,
+  llm_coherence REAL, llm_grammar REAL, llm_relevance REAL,
+  llm_creativity REAL, llm_fluency REAL, llm_completeness REAL,
+  llm_overall REAL, llm_repetition REAL,
+  failure_modes TEXT, samples TEXT, by_category TEXT,
+  generation_time_s REAL
+);
 
--- Performance
-PRAGMA journal_mode = WAL;         -- Lecturas concurrentes
-PRAGMA synchronous = NORMAL;       -- Balance seguridad/velocidad
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
 ```
 
 ---
 
-## 6. Python Reporter — Uso en Training
+## 6. Eval Pipeline
 
-### Instalación
+### Auto Metrics (sin LLM)
 
-El reporter solo requiere `requests`:
+Evaluación determinista sobre 30 prompts curados en 6 categorías:
+
+| Métrica | Qué mide | Ideal |
+|---------|----------|-------|
+| Distinct-1/2/3 | Diversidad de n-grams | > 0.7 |
+| Repetition ratio | Repetición de 4-grams | < 0.1 |
+| Self-BLEU-4 | Similitud entre samples | < 0.2 |
+| Keyword hit | Relevancia al prompt | > 0.8 |
+| Vocab richness | unique/total tokens | > 0.5 |
+| Length compliance | Cumple longitud mínima | > 0.9 |
+
+### LLM Judge (Groq)
+
+6 dimensiones evaluadas por `llama-3.3-70b-versatile`:
+
+| Dimensión | Escala | Descripción |
+|-----------|--------|-------------|
+| Coherence | 1-5 | Flujo lógico y consistencia |
+| Grammar | 1-5 | Corrección gramatical |
+| Relevance | 1-5 | Responde al prompt |
+| Creativity | 1-5 | Originalidad |
+| Fluency | 1-5 | Naturalidad del texto |
+| Completeness | 1-5 | Texto completo, no truncado |
+
+Failure modes detectados: `none`, `repetition_loop`, `nonsense`, `truncated`, `copied`, `off_topic`.
+
+### Categorías del benchmark
+
+| Categoría | # Prompts | Ejemplo |
+|-----------|-----------|---------|
+| narration | 5 | "Write a short story about a forgotten city" |
+| dialogue | 5 | "Write a conversation between a cat and a dog" |
+| instruction | 5 | "Explain how to make a paper airplane" |
+| creative | 5 | "Write a poem about the ocean at night" |
+| technical | 5 | "Describe how a neural network learns" |
+| code_doc | 5 | "Write a docstring for a sorting function" |
+
+### Ejecutar evaluación
+
 ```bash
-pip install requests
+# Via CLI (recomendado)
+z86 eval v3                              # Auto metrics
+z86 eval v3 --judge                      # + LLM judge
+z86 eval v3 --judge --dashboard          # + Enviar a dashboard
+
+# Via script directo
+python scripts/eval_checkpoint.py --checkpoint checkpoints/step_50000.pt --dashboard
+
+# Via agent (Agno)
+python -m eval.agent_eval --checkpoint checkpoints/step_50000.pt \
+  --dashboard-url http://localhost:3000 --run-name "base-20m"
 ```
 
-### Uso básico
+---
+
+## 7. Python Reporter — Uso en Training
 
 ```python
 from training.dashboard_reporter import DashboardReporter
 
-# Inicializar (comprueba conectividad automáticamente)
 reporter = DashboardReporter(
-    run="A2-clusters-only",
-    url="http://localhost:3000",  # o DASHBOARD_URL env var
-    batch_size=10,                # flush cada 10 métricas
+    run="base-20m",
+    url="http://localhost:3000",   # o env DASHBOARD_URL
+    batch_size=10,
 )
 
 for step in range(total_steps):
-    loss, l_diff, l_bal, l_div, l_hier = train_step(batch)
+    loss = train_step(batch)
 
     reporter.report(
         step=step,
-        losses={
-            "total": loss.item(),
-            "diffusion": l_diff.item(),
-            "balance": l_bal.item(),
-            "diversity": l_div.item(),
-            "hierarchy": l_hier.item(),
-        },
-        cluster_health={
-            "entropy_ratio": compute_entropy_ratio(assignments),
-            "dead_clusters": count_dead_clusters(assignments),
-            "centroid_similarity": avg_centroid_sim(codebook),
-        },
-        gate={
-            "mean": gate_values.mean().item(),
-            "std": gate_values.std().item(),
-        },
-        hierarchy={
-            "coarse_fine_alignment": alignment_score,
-            "balance": hierarchy_balance,
-        },
-        throughput={
-            "tokens_per_sec": tokens_processed / elapsed,
-            "gpu_memory_gb": torch.cuda.max_memory_allocated() / 1e9,
-            "gpu_utilization": get_gpu_util(),
-        },
+        losses={"total": loss.item(), "diffusion": l_diff.item(), ...},
+        cluster_health={"entropy_ratio": 0.87, "dead_clusters": 0, ...},
+        gate={"mean": 0.51, "std": 0.18},
+        throughput={"tokens_per_sec": 48000, "gpu_memory_gb": 12.3},
     )
 
-    # Enviar samples generados cada N steps
-    if step % 500 == 0:
-        sample = generate_sample(model, prompt="The meaning of")
-        reporter.report_generation(
-            step=step,
-            text=sample,
-            prompt="The meaning of",
-            metrics={"perplexity": compute_ppl(sample)},
-        )
-
-    # Enviar datos extra para visualizaciones avanzadas
-    if step % 100 == 0:
-        reporter.report(
-            step=step,
-            extra={
-                "centroid_similarity_matrix": sim_matrix.tolist(),  # → Heatmap
-                "gate_distribution": gate_values.cpu().tolist(),    # → Histograma
-            },
-        )
-
-# Al terminar
 reporter.close()
 ```
 
-### Comportamiento
-
-- **Thread-safe**: usa `threading.Lock` interno
-- **Async send**: envía en background threads (no bloquea training)
-- **Auto-disable**: si el dashboard no responde al inicio, se desactiva silenciosamente
-- **Batching**: acumula métricas y envía en lotes para reducir overhead
-- **Env var**: `DASHBOARD_URL` para configurar sin cambiar código
-
----
-
-## 7. Páginas del Dashboard
-
-### Overview (`/`)
-- **8 KPI cards**: Step actual, Loss total, Mejor loss, Throughput, Entropy ratio, Dead clusters, Gate mean, GPU memory
-- **Loss curves**: Todas las losses en un gráfico temporal (Recharts)
-- **Throughput**: tokens/sec + GPU memory en tiempo real
-- **Real-time**: WebSocket para actualizaciones instantáneas
-
-### Losses (`/losses`)
-- **5 KPI cards**: Total + 4 individuales
-- **Gráfico combinado**: Todas las losses superpuestas
-- **4 gráficos individuales**: L_diffusion, L_balance, L_diversity, L_hierarchy por separado
-
-### Clusters (`/clusters`)
-- **3 KPIs**: Entropy ratio (con indicador sano/bajo), Dead clusters, Centroid similarity
-- **Gráfico temporal**: Entropy ratio + Dead clusters con doble eje Y
-- **Heatmap** (Visx): Matriz de similaridad entre centroides (parsea `extra.centroid_similarity_matrix`)
-
-### Gate (`/gate`)
-- **4 KPIs**: Gate mean, Gate std, Ratio mean/std, Step actual
-- **Area chart**: Evolución de gate mean + std en el tiempo
-- **Histograma**: Distribución de activaciones del gate (parsea `extra.gate_distribution`)
-
-### Hierarchy (`/hierarchy`)
-- **3 KPIs**: Coarse-fine alignment (con indicador fuerte/débil), Hierarchy balance, L_hierarchy
-- **Gráfico temporal**: Las 3 métricas superpuestas
-
-### Generation (`/generation`)
-- **Lista scrollable** (Radix ScrollArea) de samples generados
-- Cada sample muestra: step, prompt, texto generado, métricas
-- Parsea `extra.generated_sample`, `extra.prompt`, `extra.sample_metrics`
-
-### Ablations (`/ablations`)
-- **Toggle buttons** para seleccionar runs a comparar
-- **Tabla comparativa** (TanStack Table): Run, Steps, Best/Final Loss, Avg throughput, Best entropy, Dead clusters
-- **Overlay chart**: Loss curves de todos los runs seleccionados superpuestas
+Comportamiento:
+- Thread-safe (Lock interno)
+- Async send (background threads)
+- Auto-disable si dashboard no responde
+- Batching para reducir overhead
+- Configurable via `DASHBOARD_URL` env var
 
 ---
 
-## 8. Despliegue en Producción (z86.dev)
-
-### Prerequisitos del servidor
-
-- VPS con Ubuntu/Debian
-- IP pública
-- Dominio z86.dev apuntando al servidor en Cloudflare
-
-### Paso 1: Cloudflare DNS
-
-En el panel de Cloudflare para `z86.dev`:
-
-| Tipo | Nombre | Contenido | Proxy | TTL |
-|------|--------|-----------|-------|-----|
-| A | @ | `<IP_SERVIDOR>` | Proxied | Auto |
-| A | www | `<IP_SERVIDOR>` | Proxied | Auto |
-
-Configurar:
-- **SSL/TLS**: Full (strict)
-- **Always Use HTTPS**: ON
-- **Minimum TLS**: 1.2
-- **Brotli**: ON
-
-### Paso 2: Origin Certificate
-
-En Cloudflare → SSL/TLS → Origin Server → Create Certificate:
-1. Copiar certificado → `/etc/ssl/z86.dev/origin.pem`
-2. Copiar clave → `/etc/ssl/z86.dev/origin-key.pem`
-
-### Paso 3: Deploy inicial
-
-```bash
-cd dashboard
-./deploy/deploy.sh <IP_SERVIDOR> --setup
-```
-
-Esto instala Bun, nginx, copia archivos, construye el frontend, configura nginx y systemd.
-
-### Paso 4: Deploys posteriores
-
-```bash
-./deploy/deploy.sh <IP_SERVIDOR>
-```
-
-### Paso 5: Verificar
-
-```bash
-curl https://z86.dev/api/health
-# → {"status":"ok","uptime":...}
-```
-
-### Conectar el training al dashboard
-
-Desde el pod de RunPod, el training necesita acceso al dashboard:
-
-**Opción A — Mismo pod (recomendado)**:
-```bash
-# En el pod, arrancar el dashboard
-cd /workspace/aaagent/dashboard && bun install && bun run start &
-
-# El reporter usa localhost por defecto
-export DASHBOARD_URL=http://localhost:3000
-python train.py
-```
-
-**Opción B — Dashboard en VPS externo**:
-```bash
-# El reporter apunta al VPS
-export DASHBOARD_URL=https://z86.dev
-python train.py
-```
-
-### Logs y debugging
-
-```bash
-# Logs del dashboard
-ssh root@<IP> journalctl -u z86-dashboard -f
-
-# Estado del servicio
-ssh root@<IP> systemctl status z86-dashboard
-
-# Nginx logs
-ssh root@<IP> tail -f /var/log/nginx/error.log
-
-# Base de datos
-ssh root@<IP> sqlite3 /opt/z86-dashboard/data/metrics.db ".tables"
-```
-
----
-
-## 9. Variables de Entorno
+## 8. Variables de Entorno
 
 | Variable | Default | Descripción |
 |----------|---------|-------------|
+| `DASHBOARD_URL` | `http://localhost:3000` | URL del dashboard (Python reporter) |
 | `DASHBOARD_PORT` | `3000` | Puerto del servidor Bun |
-| `DASHBOARD_DB` | `./metrics.db` | Ruta a la base de datos SQLite |
-| `NODE_ENV` | `development` | `production` para servir static files |
-| `CF_API_TOKEN` | — | Token de Cloudflare (opcional) |
-| `CF_ZONE_ID` | — | Zone ID de Cloudflare (opcional) |
-| `CORS_ORIGINS` | `https://z86.dev,http://localhost:5173` | Orígenes CORS permitidos |
-| `DASHBOARD_URL` | `http://localhost:3000` | (Python) URL del dashboard |
+| `DASHBOARD_DB` | `./metrics.db` | Ruta SQLite |
+| `CUDA_VISIBLE_DEVICES` | `0` | GPU a usar |
+| `WANDB_PROJECT` | — | Proyecto W&B (opcional) |
+| `WANDB_MODE` | `online` | `disabled` para desactivar |
+| `GROQ_API_KEY` | — | API key para LLM judge |
+| `RUN_NAME` | — | Nombre del run (set por CLI) |
+| `NODE_ENV` | `development` | `production` para static files |
+
+---
+
+## 9. Despliegue (RunPod)
+
+### Flujo completo en un solo pod
+
+```bash
+# 1. Setup (primera vez)
+cd /workspace && git clone <repo> && cd aaagent
+z86 init                              # ~30 min
+
+# 2. Dashboard (background)
+z86 dashboard &
+export DASHBOARD_URL=http://localhost:3000
+
+# 3. Entrenar
+z86 train --name "base-run" --dashboard http://localhost:3000
+
+# 4. Evaluar
+z86 eval latest --judge --dashboard
+
+# 5. Ver versiones
+z86 versions
+```
+
+### GPU recomendada
+
+| GPU | VRAM | Precio/h | Para HCLM-D 20M |
+|-----|------|----------|------------------|
+| RTX A5000 | 24GB | $0.16 | Suficiente |
+| RTX 3090 | 24GB | $0.22 | Buen balance |
+| RTX 4090 | 24GB | $0.34 | Más rápida |
+| A100 40GB | 40GB | $0.79 | Batch más grande |
+
+### Tips
+- Usa volumen persistente en `/workspace` para datos y checkpoints
+- Los `.txt` se pueden borrar después del prep (~1.9GB ahorrados)
+- Dashboard funciona sin GPU (solo CPU)
 
 ---
 
 ## 10. Stack Técnico
 
-| Capa | Tecnología | Versión |
-|------|-----------|---------|
-| Runtime | Bun | >= 1.1 |
-| API | Hono | 4.6 |
-| DB | SQLite (bun:sqlite) | WAL mode |
-| Real-time | WebSocket (nativo Bun) | — |
-| Frontend | React | 19 |
-| Router | React Router | 7 |
-| Build | Vite | 6 |
-| CSS | Tailwind CSS | 4 (oklch) |
-| UI | Radix UI Primitives | — |
-| Charts | Recharts | 2.15 |
-| Heatmaps | Visx | 3.5 |
-| Tablas | TanStack React Table | 8.20 |
-| Proxy | nginx | — |
-| Proceso | systemd | — |
-| DNS/SSL | Cloudflare | Full (strict) |
-| Reporter | Python + requests | — |
+| Capa | Tecnología |
+|------|-----------|
+| CLI | Python argparse + ANSI terminal UI |
+| Training | PyTorch 2.1+ / bfloat16 / torch.compile |
+| Eval (auto) | Python (distinct-n, self-BLEU, repetition) |
+| Eval (LLM) | Groq API (llama-3.3-70b-versatile) |
+| Eval (agent) | Agno framework |
+| Runtime | Bun 1.1+ |
+| API | Hono 4.6 |
+| DB | SQLite (bun:sqlite, WAL) |
+| Real-time | WebSocket (Bun nativo) |
+| Frontend | React 19 + Vite 6 |
+| CSS | Tailwind 4 (ZARNETTI theme) |
+| UI | Radix UI Primitives |
+| Charts | Recharts + Canvas nativo |
+| Heatmaps | Visx |
+| Tables | TanStack React Table |
+| Deploy | nginx + systemd + Cloudflare |
 
 ---
 
-## 11. Seguridad
+## 11. Troubleshooting
 
-### Nginx
-- Rate limiting: 30 req/s por IP, burst 50
-- Headers: HSTS, X-Frame-Options DENY, X-Content-Type-Options nosniff
-- SSL: TLS 1.2+ con Cloudflare origin certs
-
-### Systemd
-- `NoNewPrivileges=true`
-- `ProtectSystem=strict`
-- `ProtectHome=true`
-- `PrivateTmp=true`
-- Solo escritura en `/opt/z86-dashboard/data`
-
-### SQLite
-- WAL mode para lecturas concurrentes sin bloqueo
-- Prepared statements contra SQL injection
-
----
-
-## 12. Optimización de Costes en RunPod
-
-### Tu pod RunPod ya incluye CPU potente
-
-Los pods GPU de RunPod vienen con vCPUs y RAM generosas (ej. 25 vCPU, 50GB RAM con RTX 3090). El prep tarda pocos minutos con esas CPUs, así que **no necesitas un servidor separado**.
-
-### Flujo recomendado: todo en RunPod
-
-```
-┌─────────────────────────────────────────┐
-│         RUNPOD GPU ($0.22/h)             │
-│                                         │
-│  1. git clone + pip install  (~3 min)   │
-│  2. Prep (tokenización)     (~15 min)   │
-│  3. Entrenar                (~4 horas)  │
-│  4. Guardar checkpoint                  │
-│  5. Apagar pod                          │
-└─────────────────────────────────────────┘
-```
-
-### Comandos de una sesión completa
-
+### `pip install -e .` falla
 ```bash
-# ── PASO 1: Setup (solo la primera vez) ──
-cd /workspace
-git clone https://github.com/lailaelghazouanitecnologia-cloud/aaagent.git
-cd aaagent
-pip install ".[dev]"
-
-# ── PASO 2: Prep (solo la primera vez, o si no hay tokens) ──
-python scripts/train.py --config configs/base.yaml --phase prep
-
-# ── PASO 3: Entrenar ──
-python scripts/train.py --config configs/base.yaml --phase train
-
-# ── PASO 4: Guardar checkpoint y apagar ──
-# Los checkpoints quedan en el volumen si tienes uno montado
+pip install ".[dev]"    # sin -e
 ```
 
-### Tip: usa volumen persistente
+### Tokenización parece colgada (15-45 min sin output)
+Es normal. La tokenización de ~2M historias tarda. No hacer Ctrl+C.
 
-Si montas un volumen en `/workspace`, los tokens y checkpoints persisten entre sesiones.
-Así la segunda vez no necesitas repetir prep ni pip install.
-
-### Datos que genera el prep
-
-```
-data/
-├── tinystories/
-│   ├── train.txt          ~1.9GB   (texto crudo, borrable después)
-│   └── val.txt            ~20MB    (texto crudo, borrable después)
-│   ├── train_tokens.pt    ~2GB     ← tensor de entrenamiento
-│   └── val_tokens.pt      ~20MB    ← tensor de validación
-├── tokenizer.json         ~200KB   ← vocabulario BPE
-```
-
-Los `.txt` se pueden borrar después para ahorrar disco:
+### Dashboard no recibe métricas
 ```bash
-rm -f data/tinystories/train.txt data/tinystories/val.txt
-# Ahorro: ~1.9GB
+curl http://localhost:3000/api/health    # ¿Responde?
+echo $DASHBOARD_URL                      # ¿Variable definida?
 ```
 
-### GPU recomendada
-
-| GPU | VRAM | Precio/h | Mejor para |
-|-----|------|----------|------------|
-| RTX A5000 | 24GB | $0.16 | Más barata, suficiente para 20M params |
-| RTX 3090 | 24GB | $0.22 | Buen balance, más stock |
-| RTX 4090 | 24GB | $0.34 | Más rápida, misma VRAM |
-| A100 40GB | 40GB | $0.79 | Solo si necesitas batch más grande |
-
-Para HCLM-D (20M params, batch 64): **cualquier GPU de 24GB sobra**.
-
-### Checklist antes de encender el pod GPU
-
-- [ ] Tokens generados en Vultr (`train_tokens.pt`, `val_tokens.pt`, `tokenizer.json`)
-- [ ] Dashboard corriendo en Vultr (`curl https://z86.dev/api/health`)
-- [ ] Config del run preparada
-- [ ] SSH key configurada en RunPod
-- [ ] IP del Vultr anotada para scp
-- [ ] Saber exactamente qué comandos ejecutar (copiar de arriba)
-
-### GPU recomendada para RunPod
-
-| GPU | VRAM | Precio/h | Mejor para |
-|-----|------|----------|------------|
-| RTX A5000 | 24GB | $0.16 | Más barata, suficiente para 20M params |
-| RTX 3090 | 24GB | $0.22 | Buen balance, más stock |
-| RTX 4090 | 24GB | $0.34 | Más rápida, misma VRAM |
-| A100 40GB | 40GB | $0.79 | Solo si necesitas batch más grande |
-
-Para HCLM-D (20M params, batch 64): **cualquier GPU de 24GB sobra**.
-
----
-
-## 13. Errores Conocidos y Soluciones
-
-### Error: `Cannot import 'setuptools.backends._legacy'`
-
-**Cuándo ocurre:** al hacer `pip install -e ".[dev]"` o `pip install ".[dev]"`
-
-**Causa:** `pyproject.toml` tenía un build-backend obsoleto.
-
-**Solución (ya aplicada en el repo):**
-```toml
-# ANTES (roto):
-build-backend = "setuptools.backends._legacy:_Backend"
-
-# DESPUÉS (correcto):
-build-backend = "setuptools.build_meta"
-```
-
-Si por alguna razón vuelve a ocurrir:
+### `z86` command not found
 ```bash
-sed -i 's|setuptools.backends._legacy:_Backend|setuptools.build_meta|' pyproject.toml
-pip install ".[dev]"
+pip install -e .     # Reinstala para registrar el script
+# o ejecutar directamente:
+python -m cli.main train
 ```
-
-### Error: `pip install -e` falla con editable check
-
-**Cuándo ocurre:** versiones antiguas de pip + setuptools en contenedores Docker
-
-**Solución:** usar install sin editable:
-```bash
-pip install ".[dev]"        # sin -e
-```
-
-### Error: `destination path 'aaagent' already exists`
-
-**Cuándo ocurre:** al hacer `git clone` cuando el repo ya existe en el pod.
-
-**Solución:**
-```bash
-cd /workspace/aaagent
-git pull origin claude/hclm-d-documentation-uKBwL
-```
-
-### La tokenización parece colgada
-
-**Cuándo ocurre:** `Tokenizing train.txt...` sin output durante 15-45 min.
-
-**Es normal.** La tokenización de ~2M historias tarda. Señales de que funciona:
-- CPU al 4-10%
-- Memory estable ~22%
-- GPU al 0% (no la usa)
-- Disco activo
-
-**NO hacer Ctrl+C.** Si lo haces, al relanzar retomará desde el tokenizer (ya guardado) pero re-tokenizará desde cero.
 
 ### GPU al 0% durante prep
-
-**Es normal.** El prep (descarga + tokenización) solo usa CPU y disco. La GPU se activa cuando empieza el entrenamiento real.
-
-### Warning: `Running pip as root`
-
-**Ignorar.** En contenedores de RunPod todo corre como root. No afecta al funcionamiento.
-
-### Warning: `unauthenticated requests to HF Hub`
-
-**Ignorar.** TinyStories es público. Si quieres evitar rate limits:
-```bash
-export HF_TOKEN=tu_token_de_huggingface
-```
+Normal. El prep solo usa CPU. GPU se activa al entrenar.
