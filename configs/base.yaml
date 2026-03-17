@@ -1,0 +1,105 @@
+# HCLM-D Base Configuration — Full 20M model
+# Hierarchical Clustered Embeddings + Masked Diffusion
+
+model:
+  vocab_size: 8192
+  embed_dim: 384
+  max_seq_len: 512
+  mask_token_id: 0  # [MASK] token
+
+  embedding:
+    type: "hierarchical"  # "flat" or "hierarchical"
+    fine_clusters: 64     # K: number of fine-grained clusters
+    coarse_clusters: 8    # M: number of coarse-grained clusters
+    gate_min: 0.1         # Floor for gate activation
+    alpha_init: 0.1       # Initial weight for cluster component
+    beta_init: 0.05       # Initial weight for hierarchy component
+    use_gate: true
+    use_hierarchy: true
+
+  transformer:
+    n_layers: 8
+    n_heads: 6
+    d_ff: 1536            # 4x expansion
+    dropout: 0.1
+    activation: "swiglu"
+    norm: "rmsnorm"
+    causal: false         # Bidirectional for diffusion
+
+  head:
+    tie_weights: true     # Tie output projection with E_local
+
+diffusion:
+  # Forward process
+  mask_schedule: "uniform"  # t ~ U[0, 1]
+  min_mask_ratio: 0.0
+  max_mask_ratio: 1.0
+
+  # Reverse process (sampling)
+  sampling_steps: 64
+  remasking_strategy: "low_confidence"
+  temperature: 1.0
+  top_k: 0               # 0 = disabled
+  top_p: 1.0             # 1.0 = disabled
+
+losses:
+  lambda_balance: 0.01
+  lambda_diversity: 0.001
+  lambda_hierarchy: 0.01
+
+training:
+  # Optimizer
+  optimizer: "adamw"
+  lr: 3.0e-4
+  weight_decay: 0.1
+  betas: [0.9, 0.95]
+  eps: 1.0e-8
+  grad_clip: 1.0
+
+  # Schedule
+  warmup_steps: 1000
+  lr_schedule: "cosine"
+  total_steps: 100000
+
+  # Structural warmup (embedding-specific)
+  structural_warmup:
+    gate_freeze_steps: 500        # Phase 0: gate=0, clusters frozen
+    gate_ramp_end_steps: 2000     # Phase 1: gate ramps from 0 to learned value
+    cluster_unfreeze_step: 500    # When clusters start training
+
+  # Batching
+  batch_size: 64
+  seq_len: 512
+  gradient_accumulation: 1
+
+  # Mixed precision
+  dtype: "bfloat16"
+
+  # Checkpointing
+  checkpoint_dir: "checkpoints"
+  save_every_steps: 5000
+  eval_every_steps: 1000
+  log_every_steps: 100
+
+  # Meta-optimizer (Phase 5, optional)
+  meta:
+    enabled: false
+    enable_after_step: 100000
+    meta_lr: 1.0e-4
+    update_every: 100
+    hidden_dim: 128
+
+data:
+  dataset: "tinystories"
+  data_dir: "data/tinystories"
+  tokenizer_path: "data/tokenizer.json"
+  num_workers: 4
+  prefetch_factor: 2
+
+wandb:
+  project: "hclm-d"
+  entity: null
+  run_name: "base-20m"
+  tags: ["base", "hierarchical", "diffusion"]
+
+seed: 42

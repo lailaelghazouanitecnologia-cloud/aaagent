@@ -1,0 +1,34 @@
+# A0: Flat embedding + Autoregressive (reference baseline)
+# Standard left-to-right language model for comparison
+
+_base_: "../base.yaml"
+
+model:
+  embedding:
+    type: "flat"
+    use_gate: false
+    use_hierarchy: false
+    fine_clusters: 0
+    coarse_clusters: 0
+
+  transformer:
+    causal: true  # Autoregressive: causal attention mask
+
+diffusion:
+  # Not used in AR mode, but kept for config compatibility
+  mask_schedule: "none"
+
+losses:
+  lambda_balance: 0.0
+  lambda_diversity: 0.0
+  lambda_hierarchy: 0.0
+
+training:
+  structural_warmup:
+    gate_freeze_steps: 0
+    gate_ramp_end_steps: 0
+    cluster_unfreeze_step: 0
+
+wandb:
+  run_name: "A0-flat-autoregressive"
+  tags: ["ablation", "flat", "autoregressive", "reference"]

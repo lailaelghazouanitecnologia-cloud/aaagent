@@ -1,0 +1,21 @@
+# A3: Diffusion + Clusters + Hierarchy, no gate
+# Tests whether the gate is necessary to control structural influence
+
+_base_: "../base.yaml"
+
+model:
+  embedding:
+    type: "hierarchical"
+    fine_clusters: 64
+    coarse_clusters: 8
+    use_gate: false
+    use_hierarchy: true
+
+training:
+  structural_warmup:
+    gate_freeze_steps: 0
+    gate_ramp_end_steps: 0
+
+wandb:
+  run_name: "A3-no-gate"
+  tags: ["ablation", "clusters", "hierarchy", "no-gate", "diffusion"]

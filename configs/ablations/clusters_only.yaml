@@ -1,0 +1,20 @@
+# A2: Diffusion + Fine clusters only, no hierarchy
+# Tests whether fine-grained clusters alone add value
+
+_base_: "../base.yaml"
+
+model:
+  embedding:
+    type: "hierarchical"
+    fine_clusters: 64
+    coarse_clusters: 0
+    use_gate: true
+    use_hierarchy: false
+    beta_init: 0.0
+
+losses:
+  lambda_hierarchy: 0.0
+
+wandb:
+  run_name: "A2-clusters-only"
+  tags: ["ablation", "clusters", "no-hierarchy", "diffusion"]

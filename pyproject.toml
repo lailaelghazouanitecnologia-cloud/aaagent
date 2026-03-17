@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "hclm-d"
+version = "0.1.0"
+description = "Hierarchical Clustered Language Model with Masked Diffusion"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.1",
+    "tokenizers>=0.15",
+    "wandb>=0.16",
+    "pyyaml>=6.0",
+    "numpy>=1.24",
+    "matplotlib>=3.7",
+    "umap-learn>=0.5",
+    "tqdm>=4.65",
+    "datasets>=2.14",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "ruff>=0.1",
+]
+
+[tool.setuptools.packages.find]
+include = ["model*", "data*", "diffusion*", "losses*", "meta*", "training*", "eval*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

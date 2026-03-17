@@ -1,0 +1,12 @@
+# A4: Full structure, standard AdamW (no meta-optimizer)
+# Tests full embedding structure without meta-learning
+
+_base_: "../base.yaml"
+
+training:
+  meta:
+    enabled: false
+
+wandb:
+  run_name: "A4-no-meta"
+  tags: ["ablation", "full-structure", "no-meta", "diffusion"]

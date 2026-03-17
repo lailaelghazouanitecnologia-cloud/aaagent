@@ -1,0 +1,16 @@
+# A5: Everything enabled (meta-optimizer included)
+# Full HCLM-D with meta-optimizer — only if Phase 5 is reached
+
+_base_: "../base.yaml"
+
+training:
+  meta:
+    enabled: true
+    enable_after_step: 100000
+    meta_lr: 1.0e-4
+    update_every: 100
+    hidden_dim: 128
+
+wandb:
+  run_name: "A5-full"
+  tags: ["ablation", "full", "meta-optimizer", "diffusion"]
