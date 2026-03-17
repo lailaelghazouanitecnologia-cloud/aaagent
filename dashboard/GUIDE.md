@@ -534,3 +534,121 @@ ssh root@<IP> sqlite3 /opt/z86-dashboard/data/metrics.db ".tables"
 ### SQLite
 - WAL mode para lecturas concurrentes sin bloqueo
 - Prepared statements contra SQL injection
+
+---
+
+## 12. Optimización de Costes en RunPod
+
+### Regla de oro: prep en local, GPU solo para entrenar
+
+La tokenización (prep) usa CPU, no GPU. Hacerla en el pod alquilado es tirar dinero.
+
+**Flujo óptimo:**
+
+```bash
+# EN TU PC (gratis, sin prisa):
+git clone https://github.com/lailaelghazouanitecnologia-cloud/aaagent.git
+cd aaagent
+pip install ".[dev]"
+python scripts/train.py --config configs/base.yaml --phase prep
+# Esperar 15-45 min → genera data/train_tokens.pt y data/val_tokens.pt
+
+# Subir los tokens al volumen de RunPod (rsync, scp, o git LFS)
+scp data/train_tokens.pt data/val_tokens.pt root@<POD_IP>:/workspace/aaagent/data/
+
+# EN EL POD (GPU desde el minuto 1):
+cd /workspace/aaagent
+python scripts/train.py --config configs/base.yaml  # directo a entrenar
+```
+
+**Ahorro estimado:** ~$0.10-0.15 por sesión (15-45 min de GPU ociosa evitados).
+
+### Checklist antes de encender el pod
+
+- [ ] `train_tokens.pt` y `val_tokens.pt` generados en local
+- [ ] Tokenizer guardado en `data/tokenizer.json`
+- [ ] Config del run preparada
+- [ ] SSH key configurada en RunPod
+- [ ] Saber exactamente qué comandos ejecutar
+
+### GPU recomendada
+
+| GPU | VRAM | Precio/h | Mejor para |
+|-----|------|----------|------------|
+| RTX A5000 | 24GB | $0.16 | Más barata, suficiente para 20M params |
+| RTX 3090 | 24GB | $0.22 | Buen balance, más stock |
+| RTX 4090 | 24GB | $0.34 | Más rápida, misma VRAM |
+| A100 40GB | 40GB | $0.79 | Solo si necesitas batch más grande |
+
+Para HCLM-D (20M params, batch 64): **cualquier GPU de 24GB sobra**.
+
+---
+
+## 13. Errores Conocidos y Soluciones
+
+### Error: `Cannot import 'setuptools.backends._legacy'`
+
+**Cuándo ocurre:** al hacer `pip install -e ".[dev]"` o `pip install ".[dev]"`
+
+**Causa:** `pyproject.toml` tenía un build-backend obsoleto.
+
+**Solución (ya aplicada en el repo):**
+```toml
+# ANTES (roto):
+build-backend = "setuptools.backends._legacy:_Backend"
+
+# DESPUÉS (correcto):
+build-backend = "setuptools.build_meta"
+```
+
+Si por alguna razón vuelve a ocurrir:
+```bash
+sed -i 's|setuptools.backends._legacy:_Backend|setuptools.build_meta|' pyproject.toml
+pip install ".[dev]"
+```
+
+### Error: `pip install -e` falla con editable check
+
+**Cuándo ocurre:** versiones antiguas de pip + setuptools en contenedores Docker
+
+**Solución:** usar install sin editable:
+```bash
+pip install ".[dev]"        # sin -e
+```
+
+### Error: `destination path 'aaagent' already exists`
+
+**Cuándo ocurre:** al hacer `git clone` cuando el repo ya existe en el pod.
+
+**Solución:**
+```bash
+cd /workspace/aaagent
+git pull origin claude/hclm-d-documentation-uKBwL
+```
+
+### La tokenización parece colgada
+
+**Cuándo ocurre:** `Tokenizing train.txt...` sin output durante 15-45 min.
+
+**Es normal.** La tokenización de ~2M historias tarda. Señales de que funciona:
+- CPU al 4-10%
+- Memory estable ~22%
+- GPU al 0% (no la usa)
+- Disco activo
+
+**NO hacer Ctrl+C.** Si lo haces, al relanzar retomará desde el tokenizer (ya guardado) pero re-tokenizará desde cero.
+
+### GPU al 0% durante prep
+
+**Es normal.** El prep (descarga + tokenización) solo usa CPU y disco. La GPU se activa cuando empieza el entrenamiento real.
+
+### Warning: `Running pip as root`
+
+**Ignorar.** En contenedores de RunPod todo corre como root. No afecta al funcionamiento.
+
+### Warning: `unauthenticated requests to HF Hub`
+
+**Ignorar.** TinyStories es público. Si quieres evitar rate limits:
+```bash
+export HF_TOKEN=tu_token_de_huggingface
+```
