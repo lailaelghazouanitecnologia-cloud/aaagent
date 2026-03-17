@@ -72,6 +72,9 @@ training:
   seq_len: 512
   gradient_accumulation: 1
 
+  # Performance
+  compile: true           # torch.compile (auto fallback if unsupported)
+
   # Mixed precision
   dtype: "bfloat16"
 
@@ -93,7 +96,7 @@ data:
   dataset: "tinystories"
   data_dir: "data/tinystories"
   tokenizer_path: "data/tokenizer.json"
-  num_workers: 4
+  num_workers: auto      # auto = min(8, cpu_count // 2)
   prefetch_factor: 2
 
 wandb:

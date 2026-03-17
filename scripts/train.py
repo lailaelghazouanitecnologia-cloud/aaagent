@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import sys
 from pathlib import Path
 
@@ -20,6 +21,65 @@ from model.lm import HCLMD
 from data.dataset import HCLMDataset, collate_fn
 from data.prep import prepare_data
 from training.trainer import Trainer
+
+
+def _create_loader_with_fallback(
+    dataset: HCLMDataset,
+    batch_size: int,
+    num_workers: int,
+    seq_len: int,
+    shuffle: bool = True,
+) -> DataLoader:
+    """Try to create a DataLoader; reduce batch size on OOM.
+
+    Tests a single forward pass to detect OOM before training starts.
+    Tries batch_size → batch_size * 3/4 → batch_size // 2 → 64.
+    """
+    candidates = sorted(set([batch_size, batch_size * 3 // 4, batch_size // 2, 64]), reverse=True)
+    candidates = [b for b in candidates if b >= 16]
+
+    for bs in candidates:
+        loader = DataLoader(
+            dataset,
+            batch_size=bs,
+            shuffle=shuffle,
+            collate_fn=collate_fn,
+            num_workers=num_workers,
+            pin_memory=True,
+        )
+        if not torch.cuda.is_available() or bs == candidates[-1]:
+            logging.info("Using batch_size=%d", bs)
+            return loader
+
+        # Test if batch fits in GPU memory
+        try:
+            test_batch = next(iter(loader))
+            test_input = test_batch["input_ids"].to("cuda")
+            # Rough memory estimate: batch × seq × embed × 4 (activations) × layers
+            mem_needed = bs * seq_len * 384 * 4 * 8 * 4  # conservative bytes estimate
+            mem_available = torch.cuda.get_device_properties(0).total_mem - torch.cuda.memory_allocated()
+            del test_input, test_batch
+            torch.cuda.empty_cache()
+
+            if mem_needed < mem_available * 0.85:  # 85% safety margin
+                logging.info("Using batch_size=%d (fits in GPU memory)", bs)
+                return loader
+            else:
+                logging.info("batch_size=%d may not fit (need ~%.1fGB, available %.1fGB), trying smaller",
+                           bs, mem_needed / 1e9, mem_available / 1e9)
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                logging.warning("batch_size=%d caused OOM, trying smaller", bs)
+                torch.cuda.empty_cache()
+            else:
+                raise
+
+    # Fallback to smallest
+    logging.info("Falling back to batch_size=64")
+    return DataLoader(
+        dataset, batch_size=64, shuffle=shuffle, collate_fn=collate_fn,
+        num_workers=num_workers, pin_memory=True,
+    )
 
 
 def load_config(path: str) -> dict:
@@ -81,6 +141,17 @@ def main():
     seq_len = config.get("model", {}).get("max_seq_len", 512)
     batch_size = config.get("training", {}).get("batch_size", 64)
 
+    # Auto num_workers
+    num_workers_cfg = data_cfg.get("num_workers", 4)
+    if num_workers_cfg == "auto":
+        import os
+        cpu_count = os.cpu_count() or 4
+        num_workers = min(8, cpu_count // 2)
+        num_workers = max(2, num_workers)
+        logging.info("Auto num_workers: %d (detected %d CPUs)", num_workers, cpu_count)
+    else:
+        num_workers = int(num_workers_cfg)
+
     train_tokens_path = data_dir / "train_tokens.pt"
     val_tokens_path = data_dir / "val_tokens.pt"
 
@@ -90,14 +161,24 @@ def main():
 
     train_tokens = torch.load(train_tokens_path, weights_only=True)
     train_dataset = HCLMDataset(train_tokens, seq_len=seq_len)
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        collate_fn=collate_fn,
-        num_workers=data_cfg.get("num_workers", 4),
-        pin_memory=True,
+
+    # Auto batch size: try configured, fall back on OOM
+    train_loader = _create_loader_with_fallback(
+        train_dataset, batch_size, num_workers, seq_len, shuffle=True,
     )
+    actual_batch_size = train_loader.batch_size
+
+    # Scale LR if batch size differs from config
+    configured_batch = config.get("training", {}).get("batch_size", 64)
+    if actual_batch_size != configured_batch:
+        base_lr = config.get("training", {}).get("lr", 3e-4)
+        scaled_lr = base_lr * math.sqrt(actual_batch_size / configured_batch)
+        config.setdefault("training", {})["lr"] = scaled_lr
+        config["training"]["batch_size"] = actual_batch_size
+        logging.info(
+            "Batch size adjusted: %d → %d | LR scaled: %.2e → %.2e",
+            configured_batch, actual_batch_size, base_lr, scaled_lr,
+        )
 
     val_loader = None
     if val_tokens_path.exists():
@@ -105,10 +186,10 @@ def main():
         val_dataset = HCLMDataset(val_tokens, seq_len=seq_len)
         val_loader = DataLoader(
             val_dataset,
-            batch_size=batch_size,
+            batch_size=actual_batch_size,
             shuffle=False,
             collate_fn=collate_fn,
-            num_workers=2,
+            num_workers=max(2, num_workers // 2),
             pin_memory=True,
         )
 

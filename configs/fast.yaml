@@ -1,0 +1,34 @@
+# HCLM-D Fast Configuration — Optimized for speed
+# Inherits from base.yaml, overrides batch size and LR for faster training.
+#
+# Usage: python scripts/train.py --config configs/fast.yaml --phase train
+#
+# Expected speedup: ~2-3x vs base.yaml
+# RTX 3090: ~3 hours instead of ~8 hours
+#
+# Changes from base:
+#   batch_size: 64 → 128 (auto-fallback to 96 if OOM)
+#   lr: 3.0e-4 → 4.24e-4 (sqrt scaling: lr * sqrt(128/64))
+#   total_steps: 100000 → 50000 (same total tokens seen)
+#   num_workers: auto
+
+_base_: "base.yaml"
+
+training:
+  batch_size: 128
+  lr: 4.24e-4             # sqrt(128/64) * 3.0e-4 = ~4.24e-4
+  total_steps: 50000      # half steps × double batch = same data
+  warmup_steps: 500       # proportionally shorter warmup
+  compile: true
+
+  structural_warmup:
+    gate_freeze_steps: 250        # scaled with total_steps
+    gate_ramp_end_steps: 1000
+    cluster_unfreeze_step: 250
+
+data:
+  num_workers: auto
+
+wandb:
+  run_name: "fast-20m"
+  tags: ["fast", "hierarchical", "diffusion", "batch128"]
