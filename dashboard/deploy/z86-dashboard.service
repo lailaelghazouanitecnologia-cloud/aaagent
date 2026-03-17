@@ -1,0 +1,26 @@
+[Unit]
+Description=HCLM-D Training Dashboard (z86.dev)
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/z86-dashboard
+ExecStart=/usr/local/bin/bun server/index.ts
+Restart=always
+RestartSec=5
+
+Environment=NODE_ENV=production
+Environment=DASHBOARD_PORT=3000
+Environment=DASHBOARD_DB=/opt/z86-dashboard/data/metrics.db
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/z86-dashboard/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
