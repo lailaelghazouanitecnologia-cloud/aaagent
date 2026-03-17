@@ -66,13 +66,15 @@ def build_parser() -> argparse.ArgumentParser:
     del_p.add_argument("--keep-file", action="store_true", help="Keep checkpoint file")
 
     # ── eval ──
-    eval_p = sub.add_parser("eval", help="Evaluate a version")
-    eval_p.add_argument("version", nargs="?", default=None, help="Version id, 'latest', 'best', or path")
+    eval_p = sub.add_parser("eval", help="Evaluate a version → metrics/{tag}/")
+    eval_p.add_argument("version", nargs="?", default=None, help="Version id, tag, 'latest', 'best', or path")
     eval_p.add_argument("--config", default=None, help="Config override")
     eval_p.add_argument("--quick", action="store_true", help="Skip perplexity")
-    eval_p.add_argument("--judge", action="store_true", help="Enable LLM judge")
+    eval_p.add_argument("--judge", action="store_true", help="Enable LLM judge (needs GROQ_API_KEY)")
     eval_p.add_argument("--dashboard", action="store_true", help="Send to dashboard")
     eval_p.add_argument("--prompts", nargs="+", default=None, help="Custom prompts")
+    eval_p.add_argument("--compare", nargs=2, metavar=("A", "B"), default=None,
+                        help="Compare two versions: --compare flat-diff hier-boost")
 
     # ── generate ──
     gen_p = sub.add_parser("generate", help="Generate text")

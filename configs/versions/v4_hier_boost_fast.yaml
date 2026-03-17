@@ -1,0 +1,57 @@
+# v4-fast — hier-boost-fast: Accelerated hierarchy boost
+# Same as v4 but 2x batch, half steps, scaled LR.
+# Warmup/annealing proportionally scaled.
+# z86 train --config configs/versions/v4_hier_boost_fast.yaml
+
+_base_: "../base.yaml"
+
+version:
+  tag: "hier-boost-fast"
+  note: "Hierarchy boost accelerated (batch 128, 50k steps)"
+
+model:
+  embedding:
+    type: "hierarchical"
+    fine_clusters: 64
+    coarse_clusters: 8
+    gate_min: 0.1
+    alpha_init: 0.1
+    beta_init: 0.05
+    use_gate: true
+    use_hierarchy: true
+
+losses:
+  lambda_balance: 0.01
+  lambda_diversity: 0.001
+  lambda_hierarchy: 0.01
+
+training:
+  batch_size: 128
+  lr: 4.24e-4
+  total_steps: 50000
+  warmup_steps: 500
+  compile: true
+
+  structural_warmup:
+    gate_freeze_steps: 250          # scaled 500 * 0.5
+    gate_ramp_end_steps: 1000       # scaled 2000 * 0.5
+    cluster_unfreeze_step: 250      # scaled 500 * 0.5
+    coarse_unfreeze_step: 1500      # scaled 3000 * 0.5
+
+    # Temperature annealing (scaled)
+    temp_anneal_start: 1000         # scaled 2000 * 0.5
+    temp_anneal_end: 10000          # scaled 20000 * 0.5
+    temp_start: 1.0
+    temp_end: 0.3
+
+    # Loss curriculum (scaled)
+    loss_ramp_start: 1000
+    loss_ramp_end: 10000
+    loss_multiplier_min: 0.1
+    loss_multiplier_hierarchy_max: 10.0
+    loss_multiplier_balance_max: 5.0
+    loss_multiplier_diversity_max: 10.0
+
+wandb:
+  run_name: "v4-hier-boost-fast"
+  tags: ["version", "hierarchy", "boost", "fast"]

@@ -1,0 +1,39 @@
+# v1-fast — flat-diff-fast: Accelerated flat diffusion baseline
+# Same as v1 but 2x batch, half steps, scaled LR.
+# z86 train --config configs/versions/v1_flat_diffusion_fast.yaml
+
+_base_: "../base.yaml"
+
+version:
+  tag: "flat-diff-fast"
+  note: "Flat diffusion, accelerated (batch 128, 50k steps)"
+
+model:
+  embedding:
+    type: "flat"
+    use_gate: false
+    use_hierarchy: false
+    fine_clusters: 0
+    coarse_clusters: 0
+
+losses:
+  lambda_balance: 0.0
+  lambda_diversity: 0.0
+  lambda_hierarchy: 0.0
+
+training:
+  batch_size: 128
+  lr: 4.24e-4
+  total_steps: 50000
+  warmup_steps: 500
+  compile: true
+
+  structural_warmup:
+    gate_freeze_steps: 0
+    gate_ramp_end_steps: 0
+    cluster_unfreeze_step: 0
+    coarse_unfreeze_step: 0
+
+wandb:
+  run_name: "v1-flat-diff-fast"
+  tags: ["version", "flat", "diffusion", "fast"]
