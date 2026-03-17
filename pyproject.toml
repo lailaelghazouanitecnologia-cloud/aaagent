@@ -37,7 +37,7 @@ dev = [
 z86 = "cli.main:main"
 
 [tool.setuptools.packages.find]
-include = ["model*", "data*", "diffusion*", "losses*", "meta*", "training*", "eval*", "cli*"]
+include = ["model*", "data*", "diffusion*", "losses*", "meta*", "training*", "eval*", "cli*", "cloud*"]
 
 [tool.ruff]
 line-length = 100

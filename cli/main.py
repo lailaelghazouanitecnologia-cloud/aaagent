@@ -14,6 +14,14 @@ Usage:
     z86 serve [version] --port 8080   HTTP inference API
     z86 ablation run|status|compare   Ablation studies
     z86 dashboard [--prod]            Start dashboard
+    z86 cloud status                  Cloud resources overview
+    z86 cloud gpus                    Available GPUs + pricing
+    z86 cloud start [--preset X]      Create RunPod GPU pod
+    z86 cloud stop <pod_id>           Stop a pod
+    z86 cloud terminate <pod_id>      Destroy a pod
+    z86 cloud ssh <pod_id>            Get SSH command
+    z86 cloud dns                     Cloudflare DNS records
+    z86 cloud dns-set <name> <ip>     Set DNS record
 """
 
 from __future__ import annotations
@@ -93,6 +101,35 @@ def build_parser() -> argparse.ArgumentParser:
     dash_p.add_argument("--port", type=int, default=None, help="Server port")
     dash_p.add_argument("--prod", action="store_true", help="Production mode")
 
+    # ── cloud ──
+    cloud_p = sub.add_parser("cloud", help="Manage cloud GPUs (RunPod) and DNS (Cloudflare)")
+    cloud_sub = cloud_p.add_subparsers(dest="cloud_sub")
+
+    cloud_sub.add_parser("status", help="Show all cloud resources")
+    cloud_sub.add_parser("gpus", help="List available GPU types + pricing")
+
+    cloud_start = cloud_sub.add_parser("start", help="Create a new GPU pod")
+    cloud_start.add_argument("--preset", choices=["train-small", "train-fast", "inference"],
+                             default=None, help="GPU preset")
+    cloud_start.add_argument("--name", dest="pod_name", default="hclm-d", help="Pod name")
+
+    cloud_stop = cloud_sub.add_parser("stop", help="Stop a running pod")
+    cloud_stop.add_argument("pod_id", help="Pod ID")
+
+    cloud_term = cloud_sub.add_parser("terminate", help="Permanently destroy a pod")
+    cloud_term.add_argument("pod_id", help="Pod ID")
+
+    cloud_ssh = cloud_sub.add_parser("ssh", help="Get SSH command for a pod")
+    cloud_ssh.add_argument("pod_id", help="Pod ID")
+
+    cloud_sub.add_parser("dns", help="Show Cloudflare DNS records")
+
+    cloud_dns_set = cloud_sub.add_parser("dns-set", help="Create/update DNS record")
+    cloud_dns_set.add_argument("dns_name", help="Record name (e.g. z86.dev)")
+    cloud_dns_set.add_argument("dns_content", help="Record value (e.g. IP address)")
+    cloud_dns_set.add_argument("--type", dest="dns_type", default="A", help="Record type")
+    cloud_dns_set.add_argument("--no-proxy", action="store_true", help="Disable Cloudflare proxy")
+
     return p
 
 
@@ -148,6 +185,13 @@ def main():
     elif args.command == "dashboard":
         from cli.cmd_dashboard import cmd_dashboard
         return cmd_dashboard(args)
+
+    elif args.command == "cloud":
+        if not args.cloud_sub:
+            # Default to status
+            args.cloud_sub = "status"
+        from cli.cmd_cloud import cmd_cloud
+        return cmd_cloud(args)
 
     else:
         parser.print_help()

@@ -186,18 +186,71 @@ def cmd_doctor(args):
     else:
         ui.info("Bun not available (dashboard disabled)")
 
-    # Env vars
+    # Env vars — basic
     ui.step("Environment")
     for var, desc in [
         ("DASHBOARD_URL", "dashboard URL"),
         ("WANDB_PROJECT", "W&B project"),
-        ("GROQ_API_KEY", "Groq API (LLM judge)"),
     ]:
         val = os.environ.get(var)
         if val:
             ui.ok(f"{var}={val[:30]}{'...' if len(val) > 30 else ''}")
         else:
             ui.info(f"{var} not set ({desc})")
+
+    # ── Cloud APIs (Groq + Cloudflare + RunPod) ──
+    ui.step("Cloud APIs")
+
+    # Groq
+    groq_key = os.environ.get("GROQ_API_KEY", "")
+    if groq_key:
+        try:
+            from cloud.groq import check_api_key as check_groq
+            ok, detail = check_groq()
+            if ok:
+                ui.ok(f"GROQ_API_KEY ✓ ({detail})")
+            else:
+                ui.warn(f"GROQ_API_KEY set but failed: {detail}")
+                issues += 1
+        except Exception as e:
+            ui.warn(f"GROQ_API_KEY set (connectivity check skipped: {e})")
+    else:
+        ui.info("GROQ_API_KEY not set (needed for LLM judge eval)")
+
+    # Cloudflare
+    cf_token = os.environ.get("CF_API_TOKEN", "")
+    cf_zone = os.environ.get("CF_ZONE_ID", "")
+    if cf_token:
+        try:
+            from cloud.cloudflare import check_api_token
+            if check_api_token():
+                ui.ok(f"CF_API_TOKEN ✓ (valid)")
+            else:
+                ui.warn("CF_API_TOKEN set but invalid")
+                issues += 1
+        except Exception as e:
+            ui.warn(f"CF_API_TOKEN set (check skipped: {e})")
+        if cf_zone:
+            ui.ok(f"CF_ZONE_ID={cf_zone[:20]}...")
+        else:
+            ui.info("CF_ZONE_ID not set (needed for DNS management)")
+    else:
+        ui.info("CF_API_TOKEN not set (needed for Cloudflare DNS)")
+
+    # RunPod
+    runpod_key = os.environ.get("RUNPOD_API_KEY", "")
+    if runpod_key:
+        try:
+            from cloud.runpod import RunPodClient
+            client = RunPodClient(runpod_key)
+            pods = client.list_pods()
+            active = [p for p in pods if p.status == "RUNNING"]
+            ui.ok(f"RUNPOD_API_KEY ✓ ({len(pods)} pods, {len(active)} running)")
+        except Exception as e:
+            ui.warn(f"RUNPOD_API_KEY set but failed: {e}")
+            issues += 1
+    else:
+        ui.info("RUNPOD_API_KEY not set (needed for cloud GPU)")
 
     # Summary
     if issues == 0:

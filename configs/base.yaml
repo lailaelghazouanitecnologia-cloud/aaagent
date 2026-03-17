@@ -112,4 +112,22 @@ wandb:
   run_name: "base-20m"
   tags: ["base", "hierarchical", "diffusion"]
 
+# ── Cloud providers ──
+cloud:
+  # RunPod GPU (z86 cloud start --preset train-fast)
+  runpod:
+    default_preset: "train-fast"  # train-small | train-fast | inference
+    auto_stop_after_training: true
+
+  # Cloudflare DNS (z86 cloud dns-set z86.dev <IP>)
+  cloudflare:
+    domain: "z86.dev"
+    proxied: true
+
+  # Groq LLM judge (z86 eval --judge)
+  groq:
+    model: "llama-3.3-70b-versatile"
+    max_retries: 3
+    delay_between_calls: 0.5
+
 seed: 42
