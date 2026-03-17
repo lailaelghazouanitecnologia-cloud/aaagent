@@ -3,14 +3,8 @@ import clsx from "clsx";
 
 const navItems = [
   { to: "/", label: "Overview" },
-  { to: "/losses", label: "Losses" },
-  { to: "/clusters", label: "Clusters" },
-  { to: "/gate", label: "Gate" },
-  { to: "/hierarchy", label: "Hierarchy" },
-  { to: "/generation", label: "Generation" },
   { to: "/evals", label: "Evals" },
   { to: "/versions", label: "Versions" },
-  { to: "/ablations", label: "Ablations" },
 ];
 
 export function Layout() {
@@ -63,8 +57,8 @@ export function Layout() {
         </div>
       </header>
 
-      {/* Main content — pages render full-bleed grids */}
-      <main className="flex-1 overflow-auto" style={{ background: "var(--color-bg)" }}>
+      {/* Main content */}
+      <main className="flex-1 overflow-auto p-6" style={{ background: "var(--color-bg)" }}>
         <Outlet />
       </main>
     </div>

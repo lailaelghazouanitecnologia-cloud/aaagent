@@ -52,7 +52,6 @@ export function VersionsPage() {
     });
   };
 
-  // Comparison data for selected versions
   const comparisonData = useMemo(() => {
     if (selected.size < 2) return null;
     return versions
@@ -60,7 +59,6 @@ export function VersionsPage() {
       .sort((a, b) => a.step - b.step);
   }, [versions, selected]);
 
-  // Timeline data (all versions by step)
   const timeline = useMemo(() => {
     return versions
       .filter((v) => v.loss != null)
@@ -75,22 +73,17 @@ export function VersionsPage() {
   }, [versions]);
 
   return (
-    <div style={{ padding: "8px 10px", height: "100%", display: "flex", flexDirection: "column", gap: "1px", background: "var(--color-border)" }}>
-      {/* Header */}
-      <div style={{ background: "var(--color-s1)", padding: "8px 10px" }}>
-        <span className="panel-title">Model Versions</span>
-      </div>
+    <div className="space-y-6">
+      <h2 className="text-xl font-semibold">Model Versions</h2>
 
       {loading && (
-        <div style={{ background: "var(--color-s1)", padding: "20px", textAlign: "center" }}>
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--color-t3)" }}>Loading...</span>
-        </div>
+        <p className="text-sm text-zinc-500">Loading...</p>
       )}
 
       {!loading && versions.length === 0 && (
-        <div style={{ background: "var(--color-s1)", padding: "20px", textAlign: "center" }}>
-          <p style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--color-t3)" }}>
-            No versions registered. Train a model: <span style={{ color: "var(--color-accent-cyan)" }}>z86 train</span>
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-8 text-center">
+          <p className="text-zinc-500">
+            No versions registered. Train a model: <code className="text-cyan-400">z86 train</code>
           </p>
         </div>
       )}
@@ -98,19 +91,19 @@ export function VersionsPage() {
       {versions.length > 0 && (
         <>
           {/* Version table */}
-          <div style={{ background: "var(--color-s1)", padding: "8px 10px", overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "var(--font-mono)", fontSize: 10 }}>
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 overflow-x-auto">
+            <table className="w-full text-sm font-mono">
               <thead>
-                <tr style={{ color: "var(--color-text-dim)", textTransform: "uppercase", letterSpacing: "0.06em", fontSize: 8 }}>
-                  <th style={{ textAlign: "left", padding: "4px 8px" }}></th>
-                  <th style={{ textAlign: "left", padding: "4px 8px" }}>Version</th>
-                  <th style={{ textAlign: "right", padding: "4px 8px" }}>Step</th>
-                  <th style={{ textAlign: "right", padding: "4px 8px" }}>Loss</th>
-                  <th style={{ textAlign: "right", padding: "4px 8px" }}>PPL</th>
-                  <th style={{ textAlign: "right", padding: "4px 8px" }}>Entropy</th>
-                  <th style={{ textAlign: "left", padding: "4px 8px" }}>Run</th>
-                  <th style={{ textAlign: "right", padding: "4px 8px" }}>Size</th>
-                  <th style={{ textAlign: "left", padding: "4px 8px" }}>Date</th>
+                <tr className="border-b border-zinc-800 text-xs text-zinc-500 uppercase tracking-wider">
+                  <th className="text-left px-4 py-3 w-8"></th>
+                  <th className="text-left px-4 py-3">Version</th>
+                  <th className="text-right px-4 py-3">Step</th>
+                  <th className="text-right px-4 py-3">Loss</th>
+                  <th className="text-right px-4 py-3">PPL</th>
+                  <th className="text-right px-4 py-3">Entropy</th>
+                  <th className="text-left px-4 py-3">Run</th>
+                  <th className="text-right px-4 py-3">Size</th>
+                  <th className="text-left px-4 py-3">Date</th>
                 </tr>
               </thead>
               <tbody>
@@ -120,38 +113,28 @@ export function VersionsPage() {
                     <tr
                       key={v.id}
                       onClick={() => toggleSelect(v.id)}
-                      style={{
-                        cursor: "pointer",
-                        background: selected.has(v.id) ? "var(--color-muted)" : "transparent",
-                        borderBottom: "1px solid var(--color-border)",
-                      }}
+                      className={`cursor-pointer border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors ${
+                        selected.has(v.id) ? "bg-zinc-800/40" : ""
+                      }`}
                     >
-                      <td style={{ padding: "4px 8px", width: 20 }}>
+                      <td className="px-4 py-2">
                         <input
                           type="checkbox"
                           checked={selected.has(v.id)}
                           onChange={() => toggleSelect(v.id)}
-                          style={{ accentColor: "var(--color-accent-blue-hi)" }}
+                          className="accent-blue-500"
                         />
                       </td>
-                      <td style={{ padding: "4px 8px", color: isBest ? "var(--color-accent-green-hi)" : "var(--color-white)", fontWeight: 500 }}>
+                      <td className={`px-4 py-2 font-medium ${isBest ? "text-green-400" : "text-zinc-200"}`}>
                         {v.id}{isBest && " ★"}
                       </td>
-                      <td style={{ padding: "4px 8px", textAlign: "right", color: "var(--color-white)", fontVariantNumeric: "tabular-nums" }}>
-                        {v.step.toLocaleString()}
-                      </td>
-                      <td style={{ padding: "4px 8px", textAlign: "right", color: "var(--color-white)", fontVariantNumeric: "tabular-nums" }}>
-                        {fmt(v.loss)}
-                      </td>
-                      <td style={{ padding: "4px 8px", textAlign: "right", color: "var(--color-t2)", fontVariantNumeric: "tabular-nums" }}>
-                        {fmt(v.ppl, 2)}
-                      </td>
-                      <td style={{ padding: "4px 8px", textAlign: "right", color: "var(--color-t2)", fontVariantNumeric: "tabular-nums" }}>
-                        {fmt(v.entropy, 3)}
-                      </td>
-                      <td style={{ padding: "4px 8px", color: "var(--color-t3)" }}>{v.run}</td>
-                      <td style={{ padding: "4px 8px", textAlign: "right", color: "var(--color-t3)" }}>{v.size_mb}MB</td>
-                      <td style={{ padding: "4px 8px", color: "var(--color-text-sub)" }}>{v.created?.slice(0, 10) ?? "—"}</td>
+                      <td className="px-4 py-2 text-right text-zinc-200 tabular-nums">{v.step.toLocaleString()}</td>
+                      <td className="px-4 py-2 text-right text-zinc-200 tabular-nums">{fmt(v.loss)}</td>
+                      <td className="px-4 py-2 text-right text-zinc-400 tabular-nums">{fmt(v.ppl, 2)}</td>
+                      <td className="px-4 py-2 text-right text-zinc-400 tabular-nums">{fmt(v.entropy, 3)}</td>
+                      <td className="px-4 py-2 text-zinc-500">{v.run}</td>
+                      <td className="px-4 py-2 text-right text-zinc-500">{v.size_mb}MB</td>
+                      <td className="px-4 py-2 text-zinc-600">{v.created?.slice(0, 10) ?? "—"}</td>
                     </tr>
                   );
                 })}
@@ -159,64 +142,51 @@ export function VersionsPage() {
             </table>
           </div>
 
-          {/* Comparison: selected versions */}
+          {/* Comparison */}
           {comparisonData && comparisonData.length >= 2 && (
-            <div style={{ background: "var(--color-s1)", padding: "8px 10px" }}>
-              <span className="panel-title">
+            <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4 space-y-3">
+              <h3 className="text-sm font-medium text-zinc-400">
                 Comparison: {comparisonData.map((v) => v.id).join(" vs ")}
-              </span>
-              <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
-                {["loss", "ppl", "entropy", "gate_mean"].map((metric) => {
-                  const vals = comparisonData.map((v) => (v as any)[metric] as number | null).filter((x) => x != null);
-                  if (vals.length < 2) return null;
-                  const max = Math.max(...vals);
-                  return (
-                    <div key={metric} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontFamily: "var(--font-mono)", fontSize: 9, color: "var(--color-text-dim)", width: 70, textAlign: "right" }}>
-                        {metric}
-                      </span>
-                      {comparisonData.map((v) => {
-                        const val = (v as any)[metric] as number | null;
-                        if (val == null) return null;
-                        const pct = max > 0 ? (val / max) * 100 : 0;
-                        const color = metric === "entropy" ? "var(--color-accent-purple-hi)" : "var(--color-accent-blue-hi)";
-                        return (
-                          <div key={v.id} style={{ flex: 1, display: "flex", alignItems: "center", gap: 4 }}>
-                            <span style={{ fontFamily: "var(--font-mono)", fontSize: 9, color: "var(--color-t3)", width: 24 }}>{v.id}</span>
-                            <div style={{ flex: 1, height: 3, background: "var(--color-muted)", borderRadius: 1, overflow: "hidden" }}>
-                              <div style={{ height: "100%", width: `${pct}%`, background: color, borderRadius: 1 }} />
-                            </div>
-                            <span style={{ fontFamily: "var(--font-mono)", fontSize: 9, color: "var(--color-white)", width: 50, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                              {val.toFixed(metric === "loss" ? 4 : metric === "ppl" ? 2 : 3)}
-                            </span>
+              </h3>
+              {["loss", "ppl", "entropy", "gate_mean"].map((metric) => {
+                const vals = comparisonData.map((v) => (v as any)[metric] as number | null).filter((x) => x != null);
+                if (vals.length < 2) return null;
+                const max = Math.max(...vals);
+                return (
+                  <div key={metric} className="flex items-center gap-3">
+                    <span className="font-mono text-xs text-zinc-500 w-20 text-right">{metric}</span>
+                    {comparisonData.map((v) => {
+                      const val = (v as any)[metric] as number | null;
+                      if (val == null) return null;
+                      const pct = max > 0 ? (val / max) * 100 : 0;
+                      return (
+                        <div key={v.id} className="flex-1 flex items-center gap-2">
+                          <span className="font-mono text-xs text-zinc-500 w-8">{v.id}</span>
+                          <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                            <div className="h-full bg-blue-500 rounded-full" style={{ width: `${pct}%` }} />
                           </div>
-                        );
-                      })}
-                    </div>
-                  );
-                })}
-              </div>
+                          <span className="font-mono text-xs text-zinc-300 w-14 text-right tabular-nums">
+                            {val.toFixed(metric === "loss" ? 4 : metric === "ppl" ? 2 : 3)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
             </div>
           )}
 
-          {/* Loss timeline chart */}
+          {/* Loss timeline */}
           {timeline.length > 1 && (
-            <div style={{ background: "var(--color-s1)", padding: "8px 10px", flex: 1, minHeight: 200 }}>
-              <span className="panel-title">Loss Over Versions</span>
-              <ResponsiveContainer width="100%" height={180}>
+            <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+              <h3 className="text-sm font-medium text-zinc-400 mb-3">Loss Over Versions</h3>
+              <ResponsiveContainer width="100%" height={220}>
                 <LineChart data={timeline} margin={{ top: 8, right: 8, bottom: 4, left: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#141418" />
-                  <XAxis dataKey="label" stroke="#3e3e4a" tick={{ fill: "#58586a", fontSize: 9, fontFamily: "Geist Mono" }} />
-                  <YAxis stroke="#3e3e4a" tick={{ fill: "#58586a", fontSize: 9, fontFamily: "Geist Mono" }} />
-                  <Tooltip
-                    contentStyle={{
-                      background: "#0a0a0c",
-                      border: "1px solid #141418",
-                      borderRadius: 3,
-                      fontFamily: "Geist Mono",
-                      fontSize: 10,
-                    }}
-                  />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                  <XAxis dataKey="label" stroke="#71717a" tick={{ fill: "#a1a1aa", fontSize: 11 }} />
+                  <YAxis stroke="#71717a" tick={{ fill: "#a1a1aa", fontSize: 11 }} />
+                  <Tooltip contentStyle={{ backgroundColor: "#27272a", border: "1px solid #3f3f46", borderRadius: "8px" }} />
                   <Line type="monotone" dataKey="loss" stroke="#e5484d" strokeWidth={1.5} dot={{ r: 3, fill: "#e5484d" }} />
                 </LineChart>
               </ResponsiveContainer>
