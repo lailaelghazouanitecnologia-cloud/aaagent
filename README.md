@@ -71,7 +71,88 @@ Additionally, the cluster structure may help the diffusion process: tokens in th
 | Normalization | RMSNorm | Pre-norm configuration |
 | Mask token | `[MASK]` | Special token ID for diffusion |
 
-### 3.2 Parameter Budget
+### 3.2 Architecture Schema
+
+```
+                         ┌─────────────────────────────────┐
+                         │         OUTPUT HEAD              │
+                         │   logits = W_local^T · h_final   │
+                         │   (weight-tied with E_local)     │
+                         └────────────────┬────────────────┘
+                                          │
+                         ┌────────────────┴────────────────┐
+                         │   TRANSFORMER BACKBONE (×8)      │
+                         │                                  │
+                         │  ┌──────────────────────────┐   │
+                         │  │  RMSNorm → MHSA (bidir)  │   │
+                         │  │  6 heads, d_k=64          │   │
+                         │  │  + residual               │   │
+                         │  └──────────────────────────┘   │
+                         │  ┌──────────────────────────┐   │
+                         │  │  RMSNorm → SwiGLU FFN    │   │
+                         │  │  384 → 1536 → 384        │   │
+                         │  │  + residual               │   │
+                         │  └──────────────────────────┘   │
+                         └────────────────┬────────────────┘
+                                          │
+                         ┌────────────────┴────────────────┐
+                         │     z₀ = COMPOSITE EMBEDDING     │
+                         │                                  │
+                         │  z₀ = e_local                    │
+                         │     + g(x) ⊙ (α·e_clust + β·e_hier)
+                         │     + e_pos                      │
+                         └────────────────┬────────────────┘
+                                          │
+            ┌─────────────────────────────┼─────────────────────────────┐
+            │                             │                             │
+  ┌─────────┴─────────┐       ┌──────────┴──────────┐       ┌─────────┴─────────┐
+  │    E_LOCAL (W)     │       │  STRUCTURAL BRANCH  │       │   E_POSITIONAL     │
+  │                    │       │                     │       │                    │
+  │  nn.Embedding      │       │  ┌───────────────┐  │       │  Learned pos enc   │
+  │  vocab=8192        │       │  │  GATE g(x)    │  │       │  max_len=512       │
+  │  dim=384           │       │  │ max(σ(G·e),   │  │       │  dim=384           │
+  │  mask_token=[MASK] │       │  │     g_min=0.1)│  │       └────────────────────┘
+  └─────────┬──────────┘       │  └───────┬───────┘  │
+            │                  │          │          │
+            │                  │     ┌────┴────┐     │
+            │                  │     │    ⊙    │     │
+            │                  │     └────┬────┘     │
+            │                  │          │          │
+            │           ┌──────┴──────────┴──────┐   │
+            │           │  α·e_cluster + β·e_hier │   │
+            │           └──────┬──────────┬──────┘   │
+            │                  │          │          │
+            │       ┌──────────┴───┐  ┌───┴──────────┐
+            │       │ FINE CLUSTER │  │COARSE CLUSTER│
+            │       │              │  │  (bottom-up) │
+            │       │ Router R_f   │  │              │
+            │       │ softmax(     │  │ Router R_c   │
+            │       │  R_f·e_local)│  │ softmax(     │
+            │       │ K=64 clusters│  │  R_c·e_clust)│
+            │       │ Centroids Cᵢ │  │ M=8 clusters │
+            │       │              │  │ Centroids Hⱼ │
+            │       └──────────────┘  └──────────────┘
+            │
+  ┌─────────┴──────────────────────────────────────────────┐
+  │                    INPUT TOKENS                         │
+  │                                                        │
+  │  x = [The, little, [MASK], [MASK], a, [MASK], story]   │
+  │                                                        │
+  │  Masking ratio t ~ U[0,1] applied during training      │
+  └────────────────────────────────────────────────────────┘
+```
+
+**Data flow:**
+1. Input tokens are masked with ratio `t ~ U[0,1]`
+2. `E_local` provides base embedding (standard lookup)
+3. Fine router assigns tokens to K=64 clusters via softmax
+4. Coarse router operates on fine cluster output (bottom-up) → M=8 clusters
+5. Gate `g(x)` controls structural influence (floor at 0.1)
+6. Composite: `z₀ = e_local + g ⊙ (α·e_cluster + β·e_hier) + e_pos`
+7. Bidirectional Transformer (8 layers) processes all positions simultaneously
+8. Output head predicts original tokens at masked positions (weight-tied)
+
+### 3.3 Parameter Budget
 
 ```
 Component                    Params       Share
@@ -205,11 +286,12 @@ A small MLP (~500K params) that modulates gradient magnitude per parameter group
 ```
 hclm-d/
 ├── README.md                       # This file
+├── config.toml                     # Unified project configuration
 ├── pyproject.toml                  # Dependencies + z86 CLI entry point
 ├── Makefile                        # Legacy shortcuts (prefer z86 CLI)
 │
 ├── cli/                            # z86 unified CLI
-│   ├── main.py                     # Argparse entry point (11 subcommands)
+│   ├── main.py                     # Argparse entry point (12 subcommands)
 │   ├── ui.py                       # ANSI terminal output (ZARNETTI palette)
 │   ├── registry.py                 # Version manifest manager
 │   ├── cmd_init.py                 # z86 init / z86 doctor
@@ -218,7 +300,13 @@ hclm-d/
 │   ├── cmd_eval.py                 # z86 eval
 │   ├── cmd_generate.py             # z86 generate / z86 serve
 │   ├── cmd_ablation.py             # z86 ablation
-│   └── cmd_dashboard.py            # z86 dashboard
+│   ├── cmd_dashboard.py            # z86 dashboard
+│   └── cmd_cloud.py                # z86 cloud (RunPod + Cloudflare)
+│
+├── cloud/                          # Cloud provider integrations
+│   ├── runpod.py                   # RunPod GPU pod management (GraphQL)
+│   ├── cloudflare.py               # Cloudflare DNS management
+│   └── groq.py                     # Groq API (LLM judge)
 │
 ├── configs/
 │   ├── base.yaml                   # Default 20M config
@@ -229,24 +317,76 @@ hclm-d/
 │   │   ├── index.ts                # Hono routes + WS broadcast
 │   │   └── db.ts                   # SQLite (metrics + evals tables)
 │   ├── src/                        # React 19 + Vite 6 + Tailwind 4
-│   │   ├── app.tsx                 # Router (10 pages)
+│   │   ├── app.tsx                 # Router (3 pages)
 │   │   ├── components/             # MetricCell, CanvasChart, Layout...
-│   │   ├── pages/                  # Overview, Losses, Clusters, Gate...
+│   │   ├── pages/                  # Overview, Evals, Versions
 │   │   └── lib/                    # API hooks, fetch helpers
 │   └── GUIDE.md                    # Full dashboard & CLI documentation
 │
 ├── checkpoints/                    # Model checkpoints + manifest.json
 │
 ├── data/                           # Data loading and preprocessing
+│   ├── tokenizer.py                # BPE tokenizer (8192 vocab)
+│   ├── dataset.py                  # Streaming dataset with masking
+│   ├── masking.py                  # Diffusion masking logic (t ~ U[0,1])
+│   └── prep.py                     # Download + preprocess TinyStories
+│
 ├── model/                          # Model architecture
+│   ├── config.py                   # ModelConfig dataclass
+│   ├── lm.py                       # Full model: embedding → backbone → head
+│   ├── head.py                     # Output projection (weight-tied with E_local)
 │   ├── embedding/                  # Composite embedding components
+│   │   ├── local.py                # E_local: nn.Embedding + mask token
+│   │   ├── router.py               # Fine router + coarse router (bottom-up)
+│   │   ├── clusters.py             # Centroid matrices (K=64, M=8)
+│   │   ├── gate.py                 # Learned gate with floor
+│   │   ├── positional.py           # Learned positional encoding
+│   │   └── composite.py            # Full composite: local + gate*(cluster+hier) + pos
 │   └── transformer/                # Bidirectional Transformer backbone
+│       ├── attention.py            # Multi-head self-attention (BIDIRECTIONAL)
+│       ├── ffn.py                  # SwiGLU feed-forward
+│       ├── block.py                # Pre-norm Transformer block
+│       └── backbone.py             # Stack of N blocks
+│
 ├── diffusion/                      # Masked diffusion framework
+│   ├── noise.py                    # Forward process: masking with t ~ U[0,1]
+│   ├── sampling.py                 # Reverse process: iterative unmasking
+│   └── schedules.py                # Step schedules for generation
+│
 ├── losses/                         # Loss functions
+│   ├── diffusion_loss.py           # Masked token prediction (cross-entropy)
+│   ├── balance.py                  # Cluster usage balance
+│   ├── diversity.py                # Centroid diversity
+│   ├── hierarchy.py                # Coarse-fine consistency
+│   └── combined.py                 # L_total = L_diff + λ₁L_bal + λ₂L_div + λ₃L_hier
+│
 ├── meta/                           # Optional meta-optimizer (Phase 5)
+│   ├── stats.py                    # Per-group gradient statistics
+│   ├── meta_model.py               # Small MLP: stats → α_k
+│   ├── groups.py                   # Parameter group definitions
+│   └── scheduler.py                # Meta-model invocation schedule
+│
 ├── training/                       # Training loop and utilities
-├── eval/                           # Evaluation pipeline + agent_eval.py
+│   ├── trainer.py                  # Main training loop
+│   ├── optimizer.py                # AdamW + cosine LR schedule
+│   ├── warmup.py                   # Structural warmup (gate schedule)
+│   ├── checkpointing.py            # Save/load model + optimizer state
+│   └── dashboard_reporter.py       # Real-time metric push to dashboard
+│
+├── eval/                           # Evaluation pipeline
+│   ├── perplexity.py               # NLL / bits-per-byte
+│   ├── generation.py               # Sample generation quality
+│   ├── cluster_health.py           # Usage entropy, dead clusters
+│   ├── hierarchy_metrics.py        # Coarse-fine alignment scores
+│   ├── gate_analysis.py            # Gate activation distribution
+│   ├── llm_judge.py                # Groq LLM judge (6 criteria)
+│   └── agent_eval.py               # Agno agent wrapper for eval
+│
 ├── scripts/                        # Entry point scripts
+│   ├── train.py                    # python scripts/train.py --config ...
+│   ├── pod_bootstrap.sh            # RunPod bootstrap script
+│   └── runpod_ssh.py               # Paramiko SSH helper
+│
 └── tests/                          # Unit tests
 ```
 
@@ -401,7 +541,7 @@ cd dashboard && bun install && bun run dev
 
 Real-time monitoring dashboard built with Bun + Hono + React 19 + Vite 6 + Tailwind 4. ZARNETTI terminal aesthetic (pure black, Geist Mono, dense panels).
 
-**10 pages**: Overview, Losses, Clusters, Gate, Hierarchy, Generation, Evals, Versions, Ablations
+**3 tabs**: Overview, Evals, Versions
 
 **Key features**:
 - Real-time metrics via WebSocket
@@ -422,13 +562,72 @@ See `dashboard/GUIDE.md` for complete API reference, CLI documentation, and depl
 
 ---
 
-## 12. License
+## 12. Cloud Infrastructure
+
+### RunPod GPU Management
+
+```bash
+z86 cloud status                  # Overview of all cloud resources
+z86 cloud gpus                    # Available GPUs + pricing
+z86 cloud volumes                 # Network volumes
+z86 cloud start --preset train-fast  # Create GPU pod (A100)
+z86 cloud stop <pod_id>           # Stop pod (pause billing)
+z86 cloud terminate <pod_id>      # Destroy pod permanently
+z86 cloud ssh <pod_id>            # Get SSH command
+```
+
+### GPU Presets
+
+| Preset | GPU | VRAM | Use case |
+|---|---|---|---|
+| `train-small` | RTX A6000 | 24 GB | Quick runs (~24h for 100k steps) |
+| `train-fast` | A100 80GB | 80 GB | Full training (~12h) |
+| `inference` | RTX 4090 | 24 GB | Low-cost inference serving |
+
+### Network Volumes
+
+Persistent storage mounted at `/workspace`. Configure in `config.toml`:
+
+```toml
+[cloud.runpod]
+volume_id = "YOUR_VOLUME_ID"
+```
+
+### Cloudflare DNS
+
+```bash
+z86 cloud dns                     # List DNS records
+z86 cloud dns-set z86.dev 1.2.3.4 # Set A record
+```
+
+### Diffusion Sampling Schema
+
+```
+Step 0 (t=1.0):  [MASK] [MASK] [MASK] [MASK] [MASK] [MASK] [MASK] [MASK]
+                   ↓ predict all → select most confident → unmask
+Step 1 (t≈0.75): [MASK]  The  [MASK] [MASK] [MASK] [MASK]  was  [MASK]
+                   ↓ predict masked → select most confident → unmask
+Step 2 (t≈0.50): [MASK]  The   little [MASK]  had  [MASK]  was   happy
+                   ↓ predict masked → select most confident → unmask
+Step 3 (t≈0.25):  Once   The   little  girl   had  [MASK]  was   happy
+                   ↓ predict remaining
+Step 4 (t=0.0):   Once   The   little  girl   had    a     was   happy
+                   ↓ done
+Final:            "Once The little girl had a was happy"
+```
+
+Unlike autoregressive (left→right), diffusion fills in **any position** at each step,
+prioritizing high-confidence predictions. This enables bidirectional coherence.
+
+---
+
+## 13. License
 
 Apache 2.0
 
 ---
 
-## 13. Citation
+## 14. Citation
 
 ```bibtex
 @misc{hclmd2026,

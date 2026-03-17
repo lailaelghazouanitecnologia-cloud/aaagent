@@ -65,7 +65,7 @@ def build_scheduler(
     if schedule == "cosine":
         def lr_lambda(step: int) -> float:
             if step < warmup_steps:
-                return step / max(warmup_steps, 1)
+                return max(step, 1) / max(warmup_steps, 1)
             progress = (step - warmup_steps) / max(total_steps - warmup_steps, 1)
             return 0.5 * (1 + math.cos(math.pi * progress))
 
