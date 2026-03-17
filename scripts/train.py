@@ -57,7 +57,7 @@ def _create_loader_with_fallback(
             test_input = test_batch["input_ids"].to("cuda")
             # Rough memory estimate: batch × seq × embed × 4 (activations) × layers
             mem_needed = bs * seq_len * 384 * 4 * 8 * 4  # conservative bytes estimate
-            mem_available = torch.cuda.get_device_properties(0).total_mem - torch.cuda.memory_allocated()
+            mem_available = torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated()
             del test_input, test_batch
             torch.cuda.empty_cache()
 

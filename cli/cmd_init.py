@@ -32,7 +32,7 @@ def cmd_init(args):
         ui.ok(f"torch {torch.__version__} ({cuda_str})")
         if torch.cuda.is_available():
             name = torch.cuda.get_device_name(0)
-            mem = torch.cuda.get_device_properties(0).total_mem / (1024**3)
+            mem = torch.cuda.get_device_properties(0).total_memory / (1024**3)
             ui.ok(f"GPU: {name} ({mem:.0f}GB)")
         else:
             ui.warn("No GPU detected — training will be very slow")
@@ -116,7 +116,7 @@ def cmd_doctor(args):
         if torch.cuda.is_available():
             for i in range(torch.cuda.device_count()):
                 name = torch.cuda.get_device_name(i)
-                mem = torch.cuda.get_device_properties(i).total_mem / (1024**3)
+                mem = torch.cuda.get_device_properties(i).total_memory / (1024**3)
                 ui.ok(f"GPU {i}: {name} ({mem:.0f}GB)")
         else:
             ui.warn("No CUDA GPU available")
