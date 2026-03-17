@@ -114,15 +114,17 @@ class CompositeEmbedding(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        gate_override: float | None = None,
-        router_temperature: float = 1.0,
+        gate_scale: torch.Tensor | None = None,
+        router_temperature: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Compute composite embedding.
 
         Args:
             x: Token IDs, shape [batch_size, seq_len].
-            gate_override: If set, forces gate to this value (for warmup).
-            router_temperature: Softmax temperature for routers (lower = sharper).
+            gate_scale: Scalar tensor in [0, 1] that scales the learned gate.
+                        Passed as a tensor to avoid torch.compile recompilation.
+            router_temperature: Scalar tensor for softmax temperature.
+                                Passed as a tensor to avoid torch.compile recompilation.
 
         Returns:
             Composite embeddings, shape [batch_size, seq_len, embed_dim].
@@ -149,7 +151,7 @@ class CompositeEmbedding(nn.Module):
 
         # Gate
         if self.gate is not None:
-            g = self.gate(e_local, override_value=gate_override)
+            g = self.gate(e_local, gate_scale=gate_scale)
             self._cached_gate_values = g.detach()
             z = e_local + g * structural
         else:

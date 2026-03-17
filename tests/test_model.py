@@ -53,14 +53,14 @@ class TestHCLMD:
         # Head should use embedding weight
         assert model.head._tied_weight is model.embedding.weight
 
-    def test_gate_override(self):
+    def test_gate_scale(self):
         config = ModelConfig(
             vocab_size=256, embed_dim=64, max_seq_len=32,
             n_layers=2, n_heads=2, d_ff=128,
         )
         model = HCLMD(config)
         x = torch.randint(0, 256, (2, 16))
-        logits = model(x, gate_override=0.0)
+        logits = model(x, gate_scale=torch.tensor(0.0))
         assert logits.shape == (2, 16, 256)
 
     def test_attention_mask(self):

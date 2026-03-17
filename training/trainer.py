@@ -75,6 +75,11 @@ class Trainer:
 
         # Device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Enable TF32 for better matmul performance on Ampere+ GPUs
+        if self.device.type == "cuda":
+            torch.set_float32_matmul_precision("high")
+
         model = model.to(self.device)
 
         # torch.compile (auto fallback)
@@ -318,10 +323,24 @@ class Trainer:
         # Apply diffusion masking
         masked_ids, mask = self.masker.mask_batch(input_ids, attention_mask)
 
-        # Structural warmup: get gate override, temperature, and loss multipliers
-        gate_override = self.warmup.get_gate_value(self.global_step)
-        router_temp = self.warmup.get_router_temperature(self.global_step)
+        # Structural warmup: get gate scale, temperature, and loss multipliers
+        gate_value = self.warmup.get_gate_value(self.global_step)
+        router_temp_value = self.warmup.get_router_temperature(self.global_step)
         loss_multipliers = self.warmup.get_loss_multipliers(self.global_step)
+
+        # Convert to tensors to avoid torch.compile recompilation guards.
+        # Python floats cause dynamo to guard on the exact literal value,
+        # triggering a recompile every step during warmup ramp.
+        gate_scale = (
+            torch.tensor(gate_value, device=self.device, dtype=torch.float32)
+            if gate_value is not None
+            else None
+        )
+        router_temp = (
+            torch.tensor(router_temp_value, device=self.device, dtype=torch.float32)
+            if router_temp_value != 1.0
+            else None
+        )
 
         # Freeze/unfreeze clusters based on warmup schedule
         self.warmup.apply_freezing(self.model, self.global_step)
@@ -330,7 +349,7 @@ class Trainer:
         with torch.amp.autocast("cuda", dtype=self.amp_dtype, enabled=self.use_amp):
             logits = self.model(
                 masked_ids, attention_mask,
-                gate_override=gate_override,
+                gate_scale=gate_scale,
                 router_temperature=router_temp,
             )
 

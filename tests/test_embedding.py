@@ -38,15 +38,15 @@ class TestCompositeEmbedding:
         out = emb(x)
         assert out.shape == (2, 16, 384)
 
-    def test_gate_override(self):
+    def test_gate_scale(self):
         emb = CompositeEmbedding(
             vocab_size=8192, embed_dim=384, max_seq_len=512,
         )
         x = torch.randint(0, 8192, (2, 16))
-        out_zero = emb(x, gate_override=0.0)
-        out_full = emb(x, gate_override=1.0)
-        # With gate=0, output should be just e_local + e_pos
-        # With gate=1, output includes structural components
+        out_zero = emb(x, gate_scale=torch.tensor(0.0))
+        out_full = emb(x, gate_scale=torch.tensor(1.0))
+        # With gate_scale=0, structural component is zeroed out
+        # With gate_scale=1, full learned gate is applied
         assert out_zero.shape == out_full.shape
         assert not torch.allclose(out_zero, out_full)
 
