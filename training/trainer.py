@@ -103,6 +103,17 @@ class Trainer:
             gate_freeze_steps=sw_cfg.get("gate_freeze_steps", 500),
             gate_ramp_end_steps=sw_cfg.get("gate_ramp_end_steps", 2000),
             cluster_unfreeze_step=sw_cfg.get("cluster_unfreeze_step", 500),
+            coarse_unfreeze_step=sw_cfg.get("coarse_unfreeze_step", 3000),
+            temp_anneal_start=sw_cfg.get("temp_anneal_start", 2000),
+            temp_anneal_end=sw_cfg.get("temp_anneal_end", 20000),
+            temp_start=sw_cfg.get("temp_start", 1.0),
+            temp_end=sw_cfg.get("temp_end", 0.3),
+            loss_ramp_start=sw_cfg.get("loss_ramp_start", 2000),
+            loss_ramp_end=sw_cfg.get("loss_ramp_end", 20000),
+            loss_multiplier_min=sw_cfg.get("loss_multiplier_min", 0.1),
+            loss_multiplier_hierarchy_max=sw_cfg.get("loss_multiplier_hierarchy_max", 10.0),
+            loss_multiplier_balance_max=sw_cfg.get("loss_multiplier_balance_max", 5.0),
+            loss_multiplier_diversity_max=sw_cfg.get("loss_multiplier_diversity_max", 10.0),
         )
 
         # Masker
@@ -298,15 +309,21 @@ class Trainer:
         # Apply diffusion masking
         masked_ids, mask = self.masker.mask_batch(input_ids, attention_mask)
 
-        # Structural warmup: get gate override
+        # Structural warmup: get gate override, temperature, and loss multipliers
         gate_override = self.warmup.get_gate_value(self.global_step)
+        router_temp = self.warmup.get_router_temperature(self.global_step)
+        loss_multipliers = self.warmup.get_loss_multipliers(self.global_step)
 
         # Freeze/unfreeze clusters based on warmup schedule
         self.warmup.apply_freezing(self.model, self.global_step)
 
         # Forward pass
         with torch.amp.autocast("cuda", dtype=self.amp_dtype, enabled=self.use_amp):
-            logits = self.model(masked_ids, attention_mask, gate_override=gate_override)
+            logits = self.model(
+                masked_ids, attention_mask,
+                gate_override=gate_override,
+                router_temperature=router_temp,
+            )
 
             # Get routing info for auxiliary losses
             fine_centroids = None
@@ -347,6 +364,7 @@ class Trainer:
                 fine_centroids=fine_centroids,
                 coarse_centroids=coarse_centroids,
                 fine_to_coarse_weights=fine_to_coarse_weights,
+                loss_multipliers=loss_multipliers,
             )
 
         # Backward
@@ -441,6 +459,12 @@ class Trainer:
                         entropy = -(fine_weights * (fine_weights + eps).log2()).sum(dim=-1).mean()
                     max_entropy = math.log2(fine_weights.shape[-1])
                     parts.append(f"H_router: {entropy.item():.2f}/{max_entropy:.2f}")
+
+                # Temperature and phase info
+                temp = self.warmup.get_router_temperature(self.global_step)
+                phase = self.warmup.get_phase(self.global_step)
+                parts.append(f"τ: {temp:.2f}")
+                parts.append(f"phase: {phase}")
 
                 if parts:
                     cluster_info = " | " + " | ".join(parts)

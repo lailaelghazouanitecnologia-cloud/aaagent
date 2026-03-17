@@ -115,12 +115,14 @@ class CompositeEmbedding(nn.Module):
         self,
         x: torch.Tensor,
         gate_override: float | None = None,
+        router_temperature: float = 1.0,
     ) -> torch.Tensor:
         """Compute composite embedding.
 
         Args:
             x: Token IDs, shape [batch_size, seq_len].
             gate_override: If set, forces gate to this value (for warmup).
+            router_temperature: Softmax temperature for routers (lower = sharper).
 
         Returns:
             Composite embeddings, shape [batch_size, seq_len, embed_dim].
@@ -129,13 +131,13 @@ class CompositeEmbedding(nn.Module):
         e_local = self.local_embedding(x)
 
         # Fine cluster assignment
-        fine_weights = self.fine_router(e_local)  # [..., K]
+        fine_weights = self.fine_router(e_local, temperature=router_temperature)  # [..., K]
         e_cluster = self.fine_centroids(fine_weights)  # [..., D]
         self._cached_fine_weights = fine_weights.detach()
 
         # Coarse (hierarchical) cluster assignment — bottom-up from fine
         if self.use_hierarchy and self.coarse_router is not None:
-            coarse_weights = self.coarse_router(e_cluster)  # [..., M]
+            coarse_weights = self.coarse_router(e_cluster, temperature=router_temperature)  # [..., M]
             e_hier = self.coarse_centroids(coarse_weights)  # [..., D]
             self._cached_coarse_weights = coarse_weights.detach()
         else:

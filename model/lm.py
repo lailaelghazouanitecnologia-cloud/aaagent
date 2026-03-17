@@ -73,6 +73,7 @@ class HCLMD(nn.Module):
         masked_ids: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
         gate_override: float | None = None,
+        router_temperature: float = 1.0,
     ) -> torch.Tensor:
         """Forward pass: embed → transform → project to logits.
 
@@ -80,13 +81,18 @@ class HCLMD(nn.Module):
             masked_ids: Input token IDs (with masking applied), shape [B, S].
             attention_mask: Padding mask, shape [B, S]. 1 = real, 0 = pad.
             gate_override: Override gate value (for structural warmup).
+            router_temperature: Softmax temperature for routers (lower = sharper).
 
         Returns:
             Logits over vocabulary, shape [B, S, V].
         """
-        # Embed (pass gate_override only if hierarchical)
+        # Embed (pass gate_override + temperature only if hierarchical)
         if isinstance(self.embedding, CompositeEmbedding):
-            h = self.embedding(masked_ids, gate_override=gate_override)
+            h = self.embedding(
+                masked_ids,
+                gate_override=gate_override,
+                router_temperature=router_temperature,
+            )
         else:
             h = self.embedding(masked_ids)
 

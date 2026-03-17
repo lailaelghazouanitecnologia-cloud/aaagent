@@ -48,6 +48,7 @@ class CombinedLoss:
         fine_centroids: torch.Tensor | None = None,
         coarse_centroids: torch.Tensor | None = None,
         fine_to_coarse_weights: torch.Tensor | None = None,
+        loss_multipliers: dict[str, float] | None = None,
     ) -> LossOutput:
         """Compute combined loss.
 
@@ -59,11 +60,20 @@ class CombinedLoss:
             fine_centroids: Fine centroid matrix, shape [K, D].
             coarse_centroids: Coarse centroid matrix, shape [M, D].
             fine_to_coarse_weights: Coarse router weights over fine clusters.
+            loss_multipliers: Dynamic multipliers from warmup curriculum.
+                Keys: 'hierarchy', 'balance', 'diversity'. Values multiply
+                the base lambdas. None = no scaling (multiplier 1.0).
 
         Returns:
             LossOutput with all components.
         """
         device = logits.device
+        mult = loss_multipliers or {}
+
+        # Effective lambdas = base × dynamic multiplier
+        eff_balance = self.lambda_balance * mult.get("balance", 1.0)
+        eff_diversity = self.lambda_diversity * mult.get("diversity", 1.0)
+        eff_hierarchy = self.lambda_hierarchy * mult.get("hierarchy", 1.0)
 
         # Core diffusion loss (always computed)
         l_diff = diffusion_loss(logits, targets, mask)
@@ -73,10 +83,10 @@ class CombinedLoss:
         l_div = torch.tensor(0.0, device=device)
         l_hier = torch.tensor(0.0, device=device)
 
-        if routing_weights is not None and self.lambda_balance > 0:
+        if routing_weights is not None and eff_balance > 0:
             l_bal = balance_loss(routing_weights)
 
-        if fine_centroids is not None and self.lambda_diversity > 0:
+        if fine_centroids is not None and eff_diversity > 0:
             l_div = diversity_loss(fine_centroids)
             if coarse_centroids is not None:
                 l_div = l_div + diversity_loss(coarse_centroids)
@@ -85,16 +95,16 @@ class CombinedLoss:
             fine_centroids is not None
             and coarse_centroids is not None
             and fine_to_coarse_weights is not None
-            and self.lambda_hierarchy > 0
+            and eff_hierarchy > 0
         ):
             l_hier = hierarchy_loss(fine_centroids, coarse_centroids, fine_to_coarse_weights)
 
         # Total
         total = (
             l_diff
-            + self.lambda_balance * l_bal
-            + self.lambda_diversity * l_div
-            + self.lambda_hierarchy * l_hier
+            + eff_balance * l_bal
+            + eff_diversity * l_div
+            + eff_hierarchy * l_hier
         )
 
         return LossOutput(

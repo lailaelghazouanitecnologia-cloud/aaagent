@@ -65,7 +65,22 @@ training:
   structural_warmup:
     gate_freeze_steps: 500        # Phase 0: gate=0, clusters frozen
     gate_ramp_end_steps: 2000     # Phase 1: gate ramps from 0 to learned value
-    cluster_unfreeze_step: 500    # When clusters start training
+    cluster_unfreeze_step: 500    # When fine clusters start training
+    coarse_unfreeze_step: 3000    # When coarse clusters start (Proposal D: staggered)
+
+    # Proposal A: Router temperature annealing (sharpen routing over time)
+    temp_anneal_start: 2000       # Start annealing after warmup
+    temp_anneal_end: 20000        # Reach final temperature
+    temp_start: 1.0               # Initial τ (uniform-ish routing)
+    temp_end: 0.3                 # Final τ (sharp routing)
+
+    # Proposal B: Loss weight curriculum (ramp structural pressure)
+    loss_ramp_start: 2000                  # Start ramping after warmup
+    loss_ramp_end: 20000                   # Reach full multiplier
+    loss_multiplier_min: 0.1               # Multiplier during early training
+    loss_multiplier_hierarchy_max: 10.0    # λ_hier effective: 0.01 × 10 = 0.1
+    loss_multiplier_balance_max: 5.0       # λ_bal effective: 0.01 × 5 = 0.05
+    loss_multiplier_diversity_max: 10.0    # λ_div effective: 0.001 × 10 = 0.01
 
   # Batching
   batch_size: 64
