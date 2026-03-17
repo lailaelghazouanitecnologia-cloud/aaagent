@@ -119,30 +119,12 @@ Las versiones se almacenan en `checkpoints/manifest.json`:
 
 ## 3. Dashboard — Páginas
 
+El dashboard tiene 3 tabs principales:
+
 ### Overview (`/`)
 - 8 KPI cards: Step, Loss total, Mejor loss, Throughput, Entropy ratio, Dead clusters, Gate mean, GPU memory
 - Loss curves (Recharts)
 - Throughput en tiempo real (WebSocket)
-
-### Losses (`/losses`)
-- 5 KPIs: Total + 4 auxiliares
-- Gráfico combinado + 4 individuales
-
-### Clusters (`/clusters`)
-- 3 KPIs: Entropy ratio, Dead clusters, Centroid similarity
-- Gráfico temporal + Heatmap de similaridad (Visx)
-
-### Gate (`/gate`)
-- 4 KPIs: Gate mean, std, ratio, step
-- Area chart evolución + Histograma distribución
-
-### Hierarchy (`/hierarchy`)
-- 3 KPIs: Coarse-fine alignment, Balance, L_hierarchy
-- Gráfico temporal de las 3 métricas
-
-### Generation (`/generation`)
-- Samples de texto generados en cada checkpoint
-- Muestra: step, prompt, texto, métricas por sample
 
 ### Evals (`/evals`)
 - **Auto metrics**: Distinct-2, Repetition, Self-BLEU-4, Keyword hit, Vocab richness
@@ -157,11 +139,6 @@ Las versiones se almacenan en `checkpoints/manifest.json`:
 - Tabla de versiones con selección múltiple
 - Comparación visual por métrica (barras)
 - Timeline de loss por versión
-
-### Ablations (`/ablations`)
-- Multi-run selector
-- Tabla comparativa (TanStack Table)
-- Overlay de loss curves
 
 ---
 
@@ -399,7 +376,48 @@ Comportamiento:
 
 ---
 
-## 8. Variables de Entorno
+## 8. Configuración del Proyecto (`config.toml`)
+
+El archivo `config.toml` en la raíz centraliza la configuración de infraestructura:
+
+```toml
+[project]
+name = "hclm-d"
+version = "0.1.0"
+seed = 42
+
+[dashboard]
+port = 3000
+db_path = "metrics.db"
+websocket_path = "/ws"
+
+[data]
+dataset = "tinystories"
+data_dir = "data/tinystories"
+tokenizer_path = "data/tokenizer.json"
+
+[checkpoints]
+dir = "checkpoints"
+manifest = "checkpoints/manifest.json"
+
+[training]
+config = "configs/base.yaml"          # Los YAML siguen siendo la fuente primaria
+
+[cloud.runpod]
+default_preset = "train-fast"
+
+[cloud.groq]
+model = "llama-3.3-70b-versatile"
+
+[wandb]
+project = "hclm-d"
+```
+
+Los hiperparámetros de entrenamiento viven en `configs/*.yaml`. El TOML cubre infraestructura, dashboard, cloud, y defaults del CLI.
+
+---
+
+## 9. Variables de Entorno
 
 | Variable | Default | Descripción |
 |----------|---------|-------------|
@@ -415,7 +433,7 @@ Comportamiento:
 
 ---
 
-## 9. Despliegue (RunPod)
+## 10. Despliegue (RunPod)
 
 ### Flujo completo en un solo pod
 
@@ -454,7 +472,7 @@ z86 versions
 
 ---
 
-## 10. Stack Técnico
+## 11. Stack Técnico
 
 | Capa | Tecnología |
 |------|-----------|
@@ -477,7 +495,7 @@ z86 versions
 
 ---
 
-## 11. Troubleshooting
+## 12. Troubleshooting
 
 ### `pip install -e .` falla
 ```bash
@@ -499,6 +517,13 @@ pip install -e .     # Reinstala para registrar el script
 # o ejecutar directamente:
 python -m cli.main train
 ```
+
+### CSS 404 (`index-*.css not found`)
+El build de Vite genera archivos con hash. Si el `dist/` está obsoleto:
+```bash
+cd dashboard && bun install && bun run build
+```
+En desarrollo, usar `bun run dev` (Vite sirve hot-reload sin necesidad de build).
 
 ### GPU al 0% durante prep
 Normal. El prep solo usa CPU. GPU se activa al entrenar.
