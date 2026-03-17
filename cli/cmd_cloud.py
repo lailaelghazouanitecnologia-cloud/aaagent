@@ -17,6 +17,8 @@ def cmd_cloud(args):
         return _cloud_status()
     elif sub == "gpus":
         return _list_gpus()
+    elif sub == "volumes":
+        return _list_volumes()
     elif sub == "start":
         return _start_pod(args)
     elif sub == "stop":
@@ -143,6 +145,40 @@ def _list_gpus():
     return 0
 
 
+# ── Volumes ──
+
+def _list_volumes():
+    """List network volumes on RunPod."""
+    from cloud.runpod import RunPodClient
+
+    try:
+        client = RunPodClient()
+        volumes = client.list_volumes()
+        if not volumes:
+            ui.info("No network volumes found")
+            return 0
+
+        ui.step(f"Network Volumes ({len(volumes)})")
+        headers = ["ID", "Name", "Size (GB)", "Region"]
+        rows = []
+        for v in volumes:
+            rows.append([
+                f"{ui.C.WHITE}{v.get('id', '')}{ui.C.RST}",
+                v.get("name", ""),
+                str(v.get("size", "?")),
+                v.get("dataCenterId", "?"),
+            ])
+        ui.table(headers, rows)
+        ui.info("")
+        ui.info("Use volume in config.toml:")
+        ui.info("  [cloud.runpod]")
+        ui.info('  volume_id = "YOUR_VOLUME_ID"')
+    except Exception as e:
+        ui.err(f"Failed: {e}")
+        return 1
+    return 0
+
+
 # ── Pod lifecycle ──
 
 def _start_pod(args):
@@ -151,16 +187,31 @@ def _start_pod(args):
 
     preset = getattr(args, "preset", None)
     name = getattr(args, "pod_name", "hclm-d")
+    volume_id = getattr(args, "volume_id", None)
+
+    # Try loading volume_id from config.toml if not passed via CLI
+    if not volume_id:
+        try:
+            import tomllib
+            with open("config.toml", "rb") as f:
+                cfg = tomllib.load(f)
+            volume_id = cfg.get("cloud", {}).get("runpod", {}).get("volume_id")
+        except Exception:
+            pass
 
     ui.step(f"Creating pod '{name}'" + (f" (preset: {preset})" if preset else ""))
+    if volume_id:
+        ui.info(f"Mounting volume: {volume_id}")
 
     try:
         client = RunPodClient()
-        pod = client.create_pod(name=name, preset=preset)
+        pod = client.create_pod(name=name, preset=preset, volume_id=volume_id)
         ui.ok(f"Pod created: {pod.id}")
         ui.kv("GPU", f"{pod.gpu_type} x{pod.gpu_count}")
         ui.kv("Cost", f"${pod.cost_per_hr:.2f}/hr")
         ui.kv("Status", pod.status)
+        if volume_id:
+            ui.kv("Volume", volume_id)
         ui.info("")
         ui.info("Wait for RUNNING status, then:")
         ui.info(f"  z86 cloud ssh {pod.id}")

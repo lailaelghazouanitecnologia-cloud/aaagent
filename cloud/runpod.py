@@ -145,6 +145,16 @@ class RunPodClient:
             ))
         return results
 
+    def list_volumes(self) -> list[dict[str, Any]]:
+        """List all network volumes."""
+        query = """
+        query { myself { networkVolumes {
+            id name size dataCenterId
+        }}}
+        """
+        data = self._query(query)
+        return data.get("myself", {}).get("networkVolumes", [])
+
     def create_pod(
         self,
         name: str = "hclm-d",
@@ -152,11 +162,17 @@ class RunPodClient:
         gpu_type: str | None = None,
         gpu_count: int = 1,
         volume_gb: int = 50,
+        volume_id: str | None = None,
         container_image: str | None = None,
         docker_args: str = "",
         ports: str = "22/tcp,8080/http,3000/http",
     ) -> PodInfo:
-        """Create a new GPU pod."""
+        """Create a new GPU pod.
+
+        Args:
+            volume_id: Existing network volume ID to mount at /workspace.
+                       If set, volume_gb is ignored and the existing volume is used.
+        """
         if preset and preset in GPU_PRESETS:
             cfg = GPU_PRESETS[preset]
             gpu_type = gpu_type or cfg["gpu_type"]
@@ -176,20 +192,22 @@ class RunPodClient:
             }
         }
         """
-        variables = {
-            "input": {
-                "name": name,
-                "imageName": container_image,
-                "gpuTypeId": gpu_type,
-                "gpuCount": gpu_count,
-                "volumeInGb": volume_gb,
-                "containerDiskInGb": 20,
-                "ports": ports,
-                "dockerArgs": docker_args,
-            }
+        pod_input: dict[str, Any] = {
+            "name": name,
+            "imageName": container_image,
+            "gpuTypeId": gpu_type,
+            "gpuCount": gpu_count,
+            "containerDiskInGb": 20,
+            "ports": ports,
+            "dockerArgs": docker_args,
         }
 
-        data = self._query(query, variables)
+        if volume_id:
+            pod_input["networkVolumeId"] = volume_id
+        else:
+            pod_input["volumeInGb"] = volume_gb
+
+        data = self._query(query, {"input": pod_input})
         pod = data.get("podFindAndDeployOnDemand", {})
         return PodInfo(
             id=pod.get("id", ""),

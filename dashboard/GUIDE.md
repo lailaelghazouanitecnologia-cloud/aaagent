@@ -465,6 +465,59 @@ z86 versions
 | RTX 4090 | 24GB | $0.34 | Más rápida |
 | A100 40GB | 40GB | $0.79 | Batch más grande |
 
+### Network Volumes (persistentes)
+
+Los volúmenes de red en RunPod **sobreviven** al apagar/destruir el pod. Todo lo que pongas en `/workspace` se mantiene.
+
+```
+Pod (efímero)                Volume (persistente)
+┌──────────────┐            ┌──────────────────┐
+│  /root/      │            │  /workspace/     │
+│  /tmp/       │  ← monta → │    aaagent/      │
+│  sistema...  │            │    checkpoints/  │
+│  SE PIERDE   │            │    SE MANTIENE   │
+└──────────────┘            └──────────────────┘
+```
+
+#### Listar volúmenes existentes
+
+```bash
+z86 cloud volumes
+```
+
+#### Usar un volumen al crear pod
+
+Opción 1 — CLI directo:
+```bash
+z86 cloud start --preset train-fast --volume-id TU_VOLUME_ID
+```
+
+Opción 2 — Configurar en `config.toml` (se usa automáticamente):
+```toml
+[cloud.runpod]
+volume_id = "TU_VOLUME_ID"
+```
+
+#### Subir proyecto al volumen (dentro del pod)
+
+```bash
+ssh USER@ssh.runpod.io -i ~/.ssh/id_ed25519
+cd /workspace
+git clone https://github.com/YOUR_ORG/aaagent
+cd aaagent
+pip install -e ".[eval]"
+```
+
+O comprimir y subir desde local:
+```bash
+# Local
+tar czf aaagent.tar.gz --exclude=node_modules --exclude=.git --exclude=__pycache__ aaagent
+scp -i ~/.ssh/id_ed25519 aaagent.tar.gz USER@ssh.runpod.io:/workspace/
+
+# En el pod
+cd /workspace && tar xzf aaagent.tar.gz && rm aaagent.tar.gz
+```
+
 ### Tips
 - Usa volumen persistente en `/workspace` para datos y checkpoints
 - Los `.txt` se pueden borrar después del prep (~1.9GB ahorrados)

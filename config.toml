@@ -82,6 +82,10 @@ temperature = 1.0
 [cloud.runpod]
 default_preset = "train-fast"                 # train-small | train-fast | inference
 auto_stop_after_training = true
+# volume_id = ""                              # Network volume ID (from RunPod dashboard)
+                                              # Si se define, se monta en /workspace en vez
+                                              # de crear un volumen efímero.
+                                              # Encontrar IDs: z86 cloud volumes
 
 [cloud.runpod.presets.train-small]
 gpu = "RTX A6000"

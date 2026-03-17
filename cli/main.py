@@ -107,11 +107,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     cloud_sub.add_parser("status", help="Show all cloud resources")
     cloud_sub.add_parser("gpus", help="List available GPU types + pricing")
+    cloud_sub.add_parser("volumes", help="List network volumes")
 
     cloud_start = cloud_sub.add_parser("start", help="Create a new GPU pod")
     cloud_start.add_argument("--preset", choices=["train-small", "train-fast", "inference"],
                              default=None, help="GPU preset")
     cloud_start.add_argument("--name", dest="pod_name", default="hclm-d", help="Pod name")
+    cloud_start.add_argument("--volume-id", dest="volume_id", default=None,
+                             help="Mount existing network volume (overrides config.toml)")
 
     cloud_stop = cloud_sub.add_parser("stop", help="Stop a running pod")
     cloud_stop.add_argument("pod_id", help="Pod ID")
