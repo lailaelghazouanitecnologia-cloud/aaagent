@@ -127,7 +127,7 @@ class Trainer:
         self.log_every = train_cfg.get("log_every_steps", 100)
         self.eval_every = train_cfg.get("eval_every_steps", 1000)
         self.save_every = train_cfg.get("save_every_steps", 5000)
-        self.checkpoint_dir = Path(train_cfg.get("checkpoint_dir", "checkpoints"))
+        self.checkpoint_dir = Path(train_cfg.get("checkpoint_dir", self._resolve_checkpoint_dir()))
         self.generate_every = train_cfg.get("generate_every_steps", 5000)
 
         # Gradient accumulation
@@ -164,6 +164,15 @@ class Trainer:
             "There was a big",
         ])
         self.tokenizer = None  # Set externally via set_tokenizer()
+
+    @staticmethod
+    def _resolve_checkpoint_dir() -> str:
+        """Resolve checkpoint dir from storage config, fallback to local."""
+        try:
+            from cli.cmd_storage import get_path
+            return get_path("checkpoints")
+        except Exception:
+            return "checkpoints"
 
     def _init_meta_optimizer(self, meta_cfg: dict) -> None:
         """Initialize meta-optimizer if enabled."""

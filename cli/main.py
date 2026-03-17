@@ -100,6 +100,13 @@ def build_parser() -> argparse.ArgumentParser:
     dash_p.add_argument("--port", type=int, default=None, help="Server port")
     dash_p.add_argument("--prod", action="store_true", help="Production mode")
 
+    # ── storage ──
+    stor_p = sub.add_parser("storage", help="Configure storage paths (local / RunPod volume)")
+    stor_p.add_argument("--volume", default=None, help="Set RunPod volume ID + switch to /workspace")
+    stor_p.add_argument("--local", action="store_true", help="Switch back to local paths")
+    stor_p.add_argument("--sync-to-volume", action="store_true", help="Copy local artifacts → /workspace")
+    stor_p.add_argument("--sync-from-volume", action="store_true", help="Copy /workspace artifacts → local")
+
     # ── cloud ──
     cloud_p = sub.add_parser("cloud", help="Manage cloud GPUs (RunPod) and DNS (Cloudflare)")
     cloud_sub = cloud_p.add_subparsers(dest="cloud_sub")
@@ -191,6 +198,10 @@ def main():
     elif args.command == "dashboard":
         from cli.cmd_dashboard import cmd_dashboard
         return cmd_dashboard(args)
+
+    elif args.command == "storage":
+        from cli.cmd_storage import cmd_storage
+        return cmd_storage(args)
 
     elif args.command == "cloud":
         if not args.cloud_sub:

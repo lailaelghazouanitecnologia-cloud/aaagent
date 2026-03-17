@@ -18,6 +18,7 @@ figures/
 results/
 metrics/
 .z86_active
+.z86_storage
 
 # IDE
 .vscode/

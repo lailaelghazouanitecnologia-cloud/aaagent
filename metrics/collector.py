@@ -19,7 +19,15 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-METRICS_ROOT = Path("metrics")
+def _get_metrics_root() -> Path:
+    """Resolve metrics root from storage config, fallback to local."""
+    try:
+        from cli.cmd_storage import get_path
+        return Path(get_path("metrics"))
+    except Exception:
+        return Path("metrics")
+
+METRICS_ROOT = _get_metrics_root()
 
 
 @dataclass
