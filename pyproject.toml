@@ -19,9 +19,14 @@ dependencies = [
     "umap-learn>=0.5",
     "tqdm>=4.65",
     "datasets>=2.14",
+    "requests>=2.31",
 ]
 
 [project.optional-dependencies]
+eval = [
+    "agno>=1.0",
+    "groq>=0.4",
+]
 dev = [
     "pytest>=7.4",
     "pytest-cov>=4.1",
