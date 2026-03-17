@@ -1,0 +1,115 @@
+# ============================================================================
+# HCLM-D — Configuración general del proyecto
+# Hierarchical Clustered Language Model with Masked Diffusion
+#
+# Este archivo centraliza los valores configurables del proyecto.
+# Los configs YAML en configs/ siguen siendo la fuente primaria para
+# hiperparámetros de entrenamiento; este TOML cubre la infraestructura,
+# el dashboard, servicios cloud, y valores por defecto del CLI.
+# ============================================================================
+
+[project]
+name = "hclm-d"
+version = "0.1.0"
+seed = 42
+python_requires = ">=3.10"
+
+# ── Dashboard (Bun + Hono + React) ─────────────────────────────────────────
+[dashboard]
+port = 3000
+db_path = "metrics.db"                       # SQLite para métricas + evals
+websocket_path = "/ws"
+
+[dashboard.frontend]
+dev_port = 5173                               # Vite dev server
+build_dir = "dashboard/dist"
+
+# ── Datos y tokenización ───────────────────────────────────────────────────
+[data]
+dataset = "tinystories"
+data_dir = "data/tinystories"
+tokenizer_path = "data/tokenizer.json"
+num_workers = "auto"                          # auto = min(8, cpu_count // 2)
+prefetch_factor = 2
+
+# ── Checkpoints ────────────────────────────────────────────────────────────
+[checkpoints]
+dir = "checkpoints"
+manifest = "checkpoints/manifest.json"
+save_every_steps = 5000
+
+# ── Entrenamiento (valores por defecto; configs/*.yaml los sobreescriben) ──
+[training]
+config = "configs/base.yaml"                  # Config YAML por defecto
+batch_size = 64
+seq_len = 512
+dtype = "bfloat16"
+compile = true
+
+[training.optimizer]
+type = "adamw"
+lr = 3e-4
+weight_decay = 0.1
+betas = [0.9, 0.95]
+eps = 1e-8
+grad_clip = 1.0
+
+[training.schedule]
+warmup_steps = 1000
+lr_schedule = "cosine"
+total_steps = 100_000
+
+[training.logging]
+log_every_steps = 100
+eval_every_steps = 1000
+generate_every_steps = 5000
+
+# ── Evaluación ─────────────────────────────────────────────────────────────
+[eval]
+quick_steps = 100                             # Pasos para --quick
+default_seq_len = 256
+default_sampling_steps = 64
+temperature = 0.8
+
+# ── Serving / Inferencia ───────────────────────────────────────────────────
+[serve]
+port = 8080
+default_seq_len = 256
+default_sampling_steps = 64
+temperature = 1.0
+
+# ── Cloud: RunPod ──────────────────────────────────────────────────────────
+[cloud.runpod]
+default_preset = "train-fast"                 # train-small | train-fast | inference
+auto_stop_after_training = true
+
+[cloud.runpod.presets.train-small]
+gpu = "RTX A6000"
+vram_gb = 24
+volume_gb = 50
+
+[cloud.runpod.presets.train-fast]
+gpu = "A100 80GB"
+vcpus = 56
+volume_gb = 100
+
+[cloud.runpod.presets.inference]
+gpu = "RTX 4090"
+volume_gb = 20
+
+# ── Cloud: Cloudflare DNS ──────────────────────────────────────────────────
+[cloud.cloudflare]
+domain = "z86.dev"
+proxied = true
+
+# ── Cloud: Groq (LLM Judge) ───────────────────────────────────────────────
+[cloud.groq]
+model = "llama-3.3-70b-versatile"
+max_retries = 3
+delay_between_calls = 0.5
+
+# ── Weights & Biases ──────────────────────────────────────────────────────
+[wandb]
+project = "hclm-d"
+run_name = "base-20m"
+tags = ["base", "hierarchical", "diffusion"]
