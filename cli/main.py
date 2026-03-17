@@ -2,26 +2,17 @@
 """z86 — HCLM-D command-line interface.
 
 Usage:
-    z86 init                          Setup project (deps + data + test)
-    z86 doctor                        Check environment health
-    z86 train [--config X] [--name N] Start training
-    z86 versions [--detail] [--scan]  List model versions
-    z86 diff v1 v2                    Compare two versions
-    z86 delete <version>              Delete a version
-    z86 eval [version] [--quick]      Evaluate a version
+    z86 set v4-fast                   Select version to train
+    z86 set                           Show active version + available list
+    z86 train                         Train active version (or --config X)
+    z86 eval [version] [--judge]      Evaluate → metrics/{tag}/
+    z86 eval --compare v1 v4          Compare two versions
+    z86 versions [--detail]           List registered versions
+    z86 diff v1 v2                    Quick diff two versions
+    z86 ablation matrix               Feature comparison grid
     z86 generate [version] "prompt"   Generate text
-    z86 generate [version] -i         Interactive REPL
-    z86 serve [version] --port 8080   HTTP inference API
-    z86 ablation run|status|compare   Ablation studies
-    z86 dashboard [--prod]            Start dashboard
-    z86 cloud status                  Cloud resources overview
-    z86 cloud gpus                    Available GPUs + pricing
+    z86 dashboard [--prod]            Start monitoring dashboard
     z86 cloud start [--preset X]      Create RunPod GPU pod
-    z86 cloud stop <pod_id>           Stop a pod
-    z86 cloud terminate <pod_id>      Destroy a pod
-    z86 cloud ssh <pod_id>            Get SSH command
-    z86 cloud dns                     Cloudflare DNS records
-    z86 cloud dns-set <name> <ip>     Set DNS record
 """
 
 from __future__ import annotations
@@ -37,6 +28,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="command")
 
+    # ── set ──
+    set_p = sub.add_parser("set", help="Select which version to train")
+    set_p.add_argument("version", nargs="?", default=None, help="Version key or tag (v1, v4-fast, hier-boost...)")
+    set_p.add_argument("--clear", action="store_true", help="Clear active selection")
+
     # ── init ──
     sub.add_parser("init", help="Setup project (deps + data + smoke test)")
 
@@ -44,8 +40,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("doctor", help="Check environment health")
 
     # ── train ──
-    train_p = sub.add_parser("train", help="Start or resume training")
-    train_p.add_argument("--config", default="configs/base.yaml", help="Config path or name")
+    train_p = sub.add_parser("train", help="Start or resume training (uses active version if set)")
+    train_p.add_argument("--config", default=None, help="Config path or name (overrides active version)")
     train_p.add_argument("--resume", default=None, help="Version id or checkpoint to resume from")
     train_p.add_argument("--name", default=None, help="Run name")
     train_p.add_argument("--dashboard", default=None, help="Dashboard URL")
@@ -148,7 +144,11 @@ def main():
         return 0
 
     # Lazy import commands to keep startup fast
-    if args.command == "init":
+    if args.command == "set":
+        from cli.cmd_set import cmd_set
+        return cmd_set(args)
+
+    elif args.command == "init":
         from cli.cmd_init import cmd_init
         return cmd_init(args)
 

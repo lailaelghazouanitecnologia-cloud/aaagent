@@ -28,8 +28,19 @@ def cmd_train(args):
     """Start training with optional config and resume."""
     ui.logo()
 
-    # Resolve config path
+    # Resolve config: --config flag > active version > base.yaml
     config = args.config
+
+    if config is None:
+        # No --config: use active version if set
+        from cli.active import get_active
+        active = get_active()
+        if active:
+            _key, config, _tag = active
+            ui.info(f"Using active version: {_key} [{_tag}]")
+        else:
+            config = "configs/base.yaml"
+
     if not config.endswith(".yaml"):
         # Allow short names: "base", "fast", "v4_hier_boost"
         candidates = [

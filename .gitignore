@@ -16,6 +16,8 @@ checkpoints/
 wandb/
 figures/
 results/
+metrics/
+.z86_active
 
 # IDE
 .vscode/
