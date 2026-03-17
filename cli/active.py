@@ -20,6 +20,7 @@ VERSION_CONFIGS = {
     "v4": ("configs/versions/v4_hier_boost.yaml", "hier-boost"),
     "v4-fast": ("configs/versions/v4_hier_boost_fast.yaml", "hier-boost-fast"),
     "v5": ("configs/versions/v5_hier_boost_meta.yaml", "hier-boost+meta"),
+    "v6": ("configs/versions/v6_za_blocks.yaml", "za-blocks"),
 }
 
 # Also resolve by tag

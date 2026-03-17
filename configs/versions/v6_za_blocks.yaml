@@ -1,0 +1,184 @@
+# v6 — Za: hierarchical blocks + multi-level diffusion + VM + dynamic embeddings
+# Full system with block IR, template masking, VM execution, meta-state.
+# Builds on v5 (hier-boost+meta). Only run after v5 proves meta-optimizer works.
+# z86 train --config configs/versions/v6_za_blocks.yaml
+
+_base_: "../base.yaml"
+
+version:
+  tag: "za-blocks"
+  note: "v5 + block IR + multi-level diffusion + VM + dynamic embeddings"
+
+model:
+  vocab_size: 32768           # Expanded for BPE + special tokens
+  embed_dim: 768              # Scaled up for block capacity
+  max_seq_len: 2048
+
+  embedding:
+    type: "hierarchical"
+    fine_clusters: 256         # More clusters for richer structure
+    coarse_clusters: 32
+    gate_min: 0.1
+    alpha_init: 0.1
+    beta_init: 0.05
+    use_gate: true
+    use_hierarchy: true
+
+  # Block-aware embedding (v6)
+  block_embedding:
+    enabled: true
+    meta_dim: 128
+    max_depth: 8
+    block_gate_init: 0.0       # Starts disabled, ramps during phase 2
+
+  transformer:
+    n_layers: 12
+    n_heads: 12
+    d_ff: 3072                 # SwiGLU
+    dropout: 0.1
+    activation: "swiglu"
+    norm: "rmsnorm"
+    causal: false              # Bidirectional for diffusion
+
+  head:
+    tie_weights: true
+
+diffusion:
+  mask_schedule: "uniform"
+  min_mask_ratio: 0.0
+  max_mask_ratio: 1.0
+  sampling_steps: 64
+  remasking_strategy: "low_confidence"
+  temperature: 1.0
+  top_k: 0
+  top_p: 1.0
+
+  # Multi-level masking (v6)
+  multilevel:
+    enabled: true
+    p_token: 0.6
+    p_span: 0.2
+    p_slot: 0.1
+    p_block: 0.1
+    mean_span_len: 4
+    max_span_len: 16
+    max_block_mask_ratio: 0.3
+
+losses:
+  # v4 base lambdas
+  lambda_balance: 0.01
+  lambda_diversity: 0.001
+  lambda_hierarchy: 0.01
+
+  # v6 lambdas
+  lambda_slot: 0.5
+  lambda_block: 0.3
+  lambda_plan: 0.1
+  lambda_compose: 0.05
+  lambda_template: 0.1
+  lambda_hash: 0.01
+
+training:
+  optimizer: "adamw"
+  lr: 3.0e-4
+  weight_decay: 0.1
+  betas: [0.9, 0.95]
+  eps: 1.0e-8
+  grad_clip: 1.0
+
+  warmup_steps: 1000
+  lr_schedule: "cosine"
+  total_steps: 100000
+
+  batch_size: 64
+  seq_len: 2048
+  gradient_accumulation: 2
+  compile: true
+  dtype: "bfloat16"
+
+  # 6-phase structural warmup (v6)
+  structural_warmup:
+    # Phase 0-1: Embedding warmup (inherited from v4)
+    gate_freeze_steps: 500
+    gate_ramp_end_steps: 2000
+    cluster_unfreeze_step: 500
+    coarse_unfreeze_step: 3000
+
+    # Temperature annealing
+    temp_anneal_start: 2000
+    temp_anneal_end: 20000
+    temp_start: 1.0
+    temp_end: 0.3
+
+    # Loss curriculum
+    loss_ramp_start: 2000
+    loss_ramp_end: 20000
+    loss_multiplier_min: 0.1
+    loss_multiplier_hierarchy_max: 10.0
+    loss_multiplier_balance_max: 5.0
+    loss_multiplier_diversity_max: 10.0
+
+    # v6 phase boundaries
+    multilevel_start: 10000       # Phase 2: multi-level diffusion
+    vm_start: 30000               # Phase 3: VM integration
+    dynamic_start: 50000          # Phase 4: dynamic block creation
+    meta_start: 70000             # Phase 5: meta-learning
+
+    # Block feature ramp
+    block_gate_ramp_start: 10000
+    block_gate_ramp_end: 20000
+
+  # Meta-optimizer (activates in phase 5)
+  meta:
+    enabled: true
+    enable_after_step: 70000
+    meta_lr: 1.0e-4
+    update_every: 100
+    hidden_dim: 128
+
+  # VM config
+  vm:
+    enabled: true
+    max_steps: 100
+    timeout_ms: 5000.0
+    max_recursion_depth: 10
+
+  # Block manager config
+  blocks:
+    enabled: true
+    max_registry_size: 10000
+    max_dynamic_blocks: 1000
+    pattern_min_frequency: 5
+    pattern_min_len: 2
+    pattern_max_len: 6
+
+  checkpoint_dir: "checkpoints"
+  save_every_steps: 5000
+  eval_every_steps: 1000
+  log_every_steps: 100
+  generate_every_steps: 5000
+
+  sample_prompts:
+    - "Once upon a time"
+    - "The little girl"
+    - "There was a big"
+
+data:
+  dataset: "tinystories"
+  data_dir: "data/tinystories"
+  tokenizer_path: "data/tokenizer.json"
+  num_workers: auto
+  prefetch_factor: 2
+
+  # v6 data mix (when full corpus available)
+  # mix:
+  #   text: 0.65
+  #   code: 0.15
+  #   plans: 0.20
+
+wandb:
+  project: "hclm-d"
+  run_name: "v6-za-blocks"
+  tags: ["version", "hierarchy", "blocks", "vm", "meta", "za"]
+
+seed: 42
