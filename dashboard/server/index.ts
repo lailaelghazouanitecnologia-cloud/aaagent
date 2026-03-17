@@ -135,7 +135,7 @@ app.get("/api/evals/compare", (c) => {
 
 // --- Version registry (reads checkpoints/manifest.json) ---
 
-app.get("/api/versions", (c) => {
+app.get("/api/versions", async (c) => {
   try {
     const manifestPath = join(import.meta.dir, "..", "..", "checkpoints", "manifest.json");
     const file = Bun.file(manifestPath);
