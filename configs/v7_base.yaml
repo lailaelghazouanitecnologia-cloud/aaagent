@@ -1,0 +1,158 @@
+# Za v7 Base Configuration — ~47M params (RWKV bidirectional)
+# Masked diffusion LLM with RWKV backbone, hierarchical clusters,
+# native ranking, meta-cognition, and integrated VM.
+
+model:
+  vocab_size: 32868          # 32,768 BPE + 100 special tokens
+  embed_dim: 512
+  meta_embed_dim: 128
+  max_seq_len: 2048
+  mask_token_id: 0
+
+  embedding:
+    type: "hierarchical"
+    fine_clusters: 128       # K: emerge from training
+    coarse_clusters: 16      # M: emerge bottom-up from fine
+    gate_min: 0.1
+    alpha_init: 0.1
+    beta_init: 0.05
+    use_gate: true
+    use_hierarchy: true
+
+  backbone:
+    type: "rwkv"             # "rwkv" or "transformer"
+
+  rwkv:
+    layers: 4                # Per direction (4 fwd + 4 bwd = 8 total)
+    n_heads: 8               # d_head = 64
+    d_ff: 2048               # SwiGLU with R-gate
+    share_weights: false     # true → ~33M params
+
+  # Transformer (for ablation A1 only)
+  transformer:
+    n_layers: 8
+    n_heads: 8
+    d_ff: 2048
+    dropout: 0.0
+    activation: "swiglu"
+    norm: "layernorm"
+    causal: false
+
+  head:
+    tie_weights: true
+
+diffusion:
+  mask_schedule: "uniform"   # t ~ U[0, 1]
+  min_mask_ratio: 0.0
+  max_mask_ratio: 1.0
+  sampling_steps: 64
+  remasking_strategy: "low_confidence"
+  temperature: 1.0
+  top_k: 0
+  top_p: 1.0
+
+losses:
+  # Structural (base)
+  lambda_balance: 0.01
+  lambda_diversity: 0.001
+  lambda_hierarchy: 0.05
+  # Multi-level (phase 2+)
+  lambda_slot: 0.5
+  lambda_block: 0.3
+  # VM (phase 3+)
+  lambda_plan: 0.1
+  # Ranking (phase 4+)
+  lambda_rank: 0.05
+  lambda_compose: 0.05
+  # Storage (phase 5+)
+  lambda_storage: 0.01
+
+training:
+  # Optimizer
+  optimizer: "adamw"
+  lr: 3.0e-4
+  weight_decay: 0.1
+  betas: [0.9, 0.95]
+  eps: 1.0e-8
+  grad_clip: 1.0
+
+  # Schedule
+  warmup_steps: 1000
+  lr_schedule: "cosine"
+  total_steps: 50000
+
+  # Structural warmup — v7 6-phase schedule
+  structural_warmup:
+    version: "v7"
+    # Phase boundaries
+    phase0_end: 1000         # RWKV base (forward only)
+    phase1_end: 4000         # RWKV bidi + token diffusion
+    phase2_end: 12000        # Structure emerges
+    phase3_end: 25000        # VM integration
+    phase4_end: 35000        # Ranking + retrieval
+    # phase 5: 35K-50K       # Dynamic blocks + SSD
+
+    # Gate schedule (aligned with phases)
+    gate_freeze_steps: 1000
+    gate_ramp_end_steps: 4000
+    cluster_unfreeze_step: 1000
+    coarse_unfreeze_step: 4000
+
+    # Temperature annealing
+    temp_anneal_start: 4000
+    temp_anneal_end: 40000
+    temp_start: 1.0
+    temp_end: 0.3
+    coarse_temp_ratio: 0.6
+
+    # Loss curriculum
+    loss_ramp_start: 4000
+    loss_ramp_end: 40000
+    loss_multiplier_min: 0.1
+    loss_multiplier_hierarchy_max: 10.0
+    loss_multiplier_balance_max: 5.0
+    loss_multiplier_diversity_max: 10.0
+
+  # Batching — optimized for ~78% GPU utilization
+  batch_size: 64              # Micro-batch per step
+  seq_len: 2048
+  gradient_accumulation: 8    # Effective batch = 64 × 8 = 512
+
+  # Performance
+  compile: true
+  dtype: "bfloat16"
+
+  # Checkpointing & logging
+  checkpoint_dir: "checkpoints"
+  save_every_steps: 5000
+  eval_every_steps: 1000
+  log_every_steps: 100
+  generate_every_steps: 5000
+
+  sample_prompts:
+    - "Once upon a time"
+    - "The little girl"
+    - "There was a big"
+
+  # Hierarchy optimization
+  hierarchy:
+    enabled: false
+
+  # Meta-optimizer (disabled for v7 — replaced by GRPO in phase C)
+  meta:
+    enabled: false
+
+data:
+  dataset: "tinystories"
+  data_dir: "data/tinystories"
+  tokenizer_path: "data/tokenizer.json"
+  num_workers: auto
+  prefetch_factor: 2
+
+wandb:
+  project: "za-v7"
+  entity: null
+  run_name: "v7-rwkv-50m"
+  tags: ["v7", "rwkv", "diffusion", "hierarchical"]
+
+seed: 42

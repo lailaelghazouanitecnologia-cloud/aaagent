@@ -1,8 +1,10 @@
-"""Main training loop for HCLM-D (v0.2).
+"""Main training loop for Za (v7).
 
 Includes:
+- Dual backbone support (RWKV bidirectional / Transformer)
+- 6-phase structural warmup (v7)
 - torch.compile with fallback
-- Meta-optimizer integration (Phase 5)
+- Meta-optimizer integration (optional)
 - Dashboard reporter (real-time metrics)
 - Sample generation during training
 - Auto eval (perplexity) at checkpoints
@@ -21,7 +23,6 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from model.lm import HCLMD
 from model.embedding.composite import CompositeEmbedding
 from data.masking import DiffusionMasker
 from losses.combined import CombinedLoss
@@ -61,7 +62,7 @@ class Trainer:
 
     def __init__(
         self,
-        model: HCLMD,
+        model: nn.Module,
         train_loader: DataLoader,
         val_loader: DataLoader | None = None,
         config: dict | None = None,
@@ -102,25 +103,54 @@ class Trainer:
             lambda_hierarchy=loss_cfg.get("lambda_hierarchy", 0.01),
         )
 
-        # Structural warmup
+        # Structural warmup — detect version
         sw_cfg = train_cfg.get("structural_warmup", {})
-        self.warmup = StructuralWarmup(
-            gate_freeze_steps=sw_cfg.get("gate_freeze_steps", 500),
-            gate_ramp_end_steps=sw_cfg.get("gate_ramp_end_steps", 2000),
-            cluster_unfreeze_step=sw_cfg.get("cluster_unfreeze_step", 500),
-            coarse_unfreeze_step=sw_cfg.get("coarse_unfreeze_step", 3000),
-            temp_anneal_start=sw_cfg.get("temp_anneal_start", 2000),
-            temp_anneal_end=sw_cfg.get("temp_anneal_end", 20000),
-            temp_start=sw_cfg.get("temp_start", 1.0),
-            temp_end=sw_cfg.get("temp_end", 0.3),
-            coarse_temp_ratio=sw_cfg.get("coarse_temp_ratio", 0.6),
-            loss_ramp_start=sw_cfg.get("loss_ramp_start", 2000),
-            loss_ramp_end=sw_cfg.get("loss_ramp_end", 20000),
-            loss_multiplier_min=sw_cfg.get("loss_multiplier_min", 0.1),
-            loss_multiplier_hierarchy_max=sw_cfg.get("loss_multiplier_hierarchy_max", 10.0),
-            loss_multiplier_balance_max=sw_cfg.get("loss_multiplier_balance_max", 5.0),
-            loss_multiplier_diversity_max=sw_cfg.get("loss_multiplier_diversity_max", 10.0),
-        )
+        warmup_version = sw_cfg.get("version", "v4")
+
+        if warmup_version == "v7":
+            from training.warmup_v7 import V7Warmup
+            self.warmup = V7Warmup(
+                phase0_end=sw_cfg.get("phase0_end", 1000),
+                phase1_end=sw_cfg.get("phase1_end", 4000),
+                phase2_end=sw_cfg.get("phase2_end", 12000),
+                phase3_end=sw_cfg.get("phase3_end", 25000),
+                phase4_end=sw_cfg.get("phase4_end", 35000),
+                gate_freeze_steps=sw_cfg.get("gate_freeze_steps", 1000),
+                gate_ramp_end_steps=sw_cfg.get("gate_ramp_end_steps", 4000),
+                cluster_unfreeze_step=sw_cfg.get("cluster_unfreeze_step", 1000),
+                coarse_unfreeze_step=sw_cfg.get("coarse_unfreeze_step", 4000),
+                temp_anneal_start=sw_cfg.get("temp_anneal_start", 4000),
+                temp_anneal_end=sw_cfg.get("temp_anneal_end", 40000),
+                temp_start=sw_cfg.get("temp_start", 1.0),
+                temp_end=sw_cfg.get("temp_end", 0.3),
+                coarse_temp_ratio=sw_cfg.get("coarse_temp_ratio", 0.6),
+                loss_ramp_start=sw_cfg.get("loss_ramp_start", 4000),
+                loss_ramp_end=sw_cfg.get("loss_ramp_end", 40000),
+                loss_multiplier_min=sw_cfg.get("loss_multiplier_min", 0.1),
+                loss_multiplier_hierarchy_max=sw_cfg.get("loss_multiplier_hierarchy_max", 10.0),
+                loss_multiplier_balance_max=sw_cfg.get("loss_multiplier_balance_max", 5.0),
+                loss_multiplier_diversity_max=sw_cfg.get("loss_multiplier_diversity_max", 10.0),
+            )
+            self._warmup_version = "v7"
+        else:
+            self.warmup = StructuralWarmup(
+                gate_freeze_steps=sw_cfg.get("gate_freeze_steps", 500),
+                gate_ramp_end_steps=sw_cfg.get("gate_ramp_end_steps", 2000),
+                cluster_unfreeze_step=sw_cfg.get("cluster_unfreeze_step", 500),
+                coarse_unfreeze_step=sw_cfg.get("coarse_unfreeze_step", 3000),
+                temp_anneal_start=sw_cfg.get("temp_anneal_start", 2000),
+                temp_anneal_end=sw_cfg.get("temp_anneal_end", 20000),
+                temp_start=sw_cfg.get("temp_start", 1.0),
+                temp_end=sw_cfg.get("temp_end", 0.3),
+                coarse_temp_ratio=sw_cfg.get("coarse_temp_ratio", 0.6),
+                loss_ramp_start=sw_cfg.get("loss_ramp_start", 2000),
+                loss_ramp_end=sw_cfg.get("loss_ramp_end", 20000),
+                loss_multiplier_min=sw_cfg.get("loss_multiplier_min", 0.1),
+                loss_multiplier_hierarchy_max=sw_cfg.get("loss_multiplier_hierarchy_max", 10.0),
+                loss_multiplier_balance_max=sw_cfg.get("loss_multiplier_balance_max", 5.0),
+                loss_multiplier_diversity_max=sw_cfg.get("loss_multiplier_diversity_max", 10.0),
+            )
+            self._warmup_version = "v4"
 
         # Masker
         mask_token_id = self.config.get("model", {}).get("mask_token_id", 0)
@@ -419,7 +449,10 @@ class Trainer:
         )
 
         # Freeze/unfreeze clusters based on warmup schedule
-        self.warmup.apply_freezing(self.model, self.global_step)
+        if self._warmup_version == "v7":
+            self.warmup.apply_v7_freezing(self.model, self.global_step)
+        else:
+            self.warmup.apply_freezing(self.model, self.global_step)
 
         # Forward pass
         with torch.amp.autocast("cuda", dtype=self.amp_dtype, enabled=self.use_amp):

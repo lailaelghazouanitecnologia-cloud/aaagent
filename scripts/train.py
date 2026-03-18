@@ -132,9 +132,15 @@ def main():
         prepare_data(config)
         return
 
-    # Build model
+    # Build model — use ZaModel for v7 (RWKV backbone), HCLMD for legacy
     model_config = ModelConfig.from_dict(config)
-    model = HCLMD(model_config)
+    backbone_type = config.get("model", {}).get("backbone", {}).get("type",
+                    config.get("model", {}).get("backbone_type", "transformer"))
+    if backbone_type == "rwkv":
+        from model.za_model import ZaModel
+        model = ZaModel(model_config)
+    else:
+        model = HCLMD(model_config)
 
     param_counts = model.count_parameters()
     logging.info("Model parameters: %s", param_counts)
@@ -167,8 +173,11 @@ def main():
     train_dataset = HCLMDataset(train_tokens, seq_len=seq_len)
 
     # Auto batch size: try configured, fall back on OOM
-    embed_dim = config.get("model", {}).get("embed_dim", 384)
-    n_layers = config.get("model", {}).get("transformer", {}).get("n_layers", 8)
+    embed_dim = config.get("model", {}).get("embed_dim", 512)
+    if backbone_type == "rwkv":
+        n_layers = config.get("model", {}).get("rwkv", {}).get("layers", 4) * 2
+    else:
+        n_layers = config.get("model", {}).get("transformer", {}).get("n_layers", 8)
     train_loader = _create_loader_with_fallback(
         train_dataset, batch_size, num_workers, seq_len, shuffle=True,
         embed_dim=embed_dim, n_layers=n_layers,
