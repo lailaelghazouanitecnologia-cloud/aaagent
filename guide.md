@@ -43,17 +43,18 @@ El pipeline multilingue hace:
 2. Filtra por calidad (largo minimo, dedup basico, archivos con def/class para Python)
 3. Anota estructura: `[BLOCK_START]`/`[BLOCK_END]` en parrafos, `[SLOT_START]`/`[SLOT_END]` en dialogos/docstrings
 4. Prefija cada documento con tag de idioma: `[LANG_EN]`, `[LANG_ES]`, `[LANG_PY]`
-5. Mezcla interleaved (round-robin entre dominios para diversidad)
-6. Entrena tokenizer BPE sobre el corpus mezclado (vocab 32,868 = 32,768 BPE + 100 especiales)
-7. Tokeniza y guarda como tensores `.pt` (train 95% / val 5%)
+5. Mezcla con weighted sampling (respeta ratios exactos 70/20/10)
+6. Entrena tokenizer BPE sobre el corpus crudo (vocab 32,868 = 32,768 BPE + 100 especiales)
+7. Split train/val por documento completo (sin cortar documentos, sin leakage)
+8. Tokeniza y guarda como tensores `.pt` (train 95% / val 5%)
 
 ### Fuentes y alternativas
 
 | Dominio | Principal | Fallback |
 |---------|-----------|----------|
 | EN | `HuggingFaceFW/fineweb-edu-score-2` (streaming) | `roneneldan/TinyStories` |
-| ES | `oscar-corpus/OSCAR-2301` (language=es) | `wikipedia/20220301.es` |
-| Python | `bigcode/the-stack-v2-train-smol-ids` (Python) | `bigcode/the-stack-dedup` |
+| ES | `oscar-corpus/OSCAR-2301` (language=es, streaming) | `wikipedia/20220301.es` |
+| Python | `bigcode/the-stack-v2-train-smol-ids` (streaming) | `bigcode/the-stack-dedup`, `codeparrot/github-code` |
 
 ### Configurar ratios
 

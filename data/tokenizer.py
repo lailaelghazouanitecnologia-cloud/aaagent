@@ -13,7 +13,10 @@ tokenizer retraining.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from tokenizers import Tokenizer, models, trainers, pre_tokenizers, decoders, processors
 
@@ -69,6 +72,20 @@ def build_tokenizer(
     )
 
     tokenizer.train(corpus_files, trainer)
+
+    # Ensure ALL special tokens are registered as single tokens.
+    # BpeTrainer registers them during training, but verify they map
+    # to the correct IDs and won't be split by BPE.
+    vocab = tokenizer.get_vocab()
+    for idx, token_str in enumerate(SPECIAL_TOKEN_LIST):
+        if token_str not in vocab:
+            tokenizer.add_special_tokens([token_str])
+        actual_id = vocab.get(token_str)
+        if actual_id is not None and actual_id != idx:
+            logger.warning(
+                "Special token %s has ID %d, expected %d",
+                token_str, actual_id, idx,
+            )
 
     # Post-processor: add BOS/EOS
     tokenizer.post_processor = processors.TemplateProcessing(

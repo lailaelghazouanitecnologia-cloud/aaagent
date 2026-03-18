@@ -127,8 +127,32 @@ HCLMDataset = ZaDataset
 
 
 def collate_fn(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
-    """Collate a batch of dataset items into batched tensors."""
-    return {
-        key: torch.stack([item[key] for item in batch])
-        for key in batch[0].keys()
-    }
+    """Collate a batch of dataset items into batched tensors.
+
+    All items have fixed-size tensors (padded to MAX_SLOTS/MAX_BLOCKS),
+    so torch.stack should always work. Includes a defensive check.
+    """
+    result = {}
+    for key in batch[0].keys():
+        tensors = [item[key] for item in batch]
+        # Verify shapes match (they should, but be safe)
+        shape0 = tensors[0].shape
+        if not all(t.shape == shape0 for t in tensors):
+            # Pad to max shape along each dim
+            max_shape = list(shape0)
+            for t in tensors[1:]:
+                for d in range(len(max_shape)):
+                    max_shape[d] = max(max_shape[d], t.shape[d])
+            padded = []
+            for t in tensors:
+                if t.shape == tuple(max_shape):
+                    padded.append(t)
+                else:
+                    p = torch.full(max_shape, -1, dtype=t.dtype)
+                    slices = tuple(slice(0, s) for s in t.shape)
+                    p[slices] = t
+                    padded.append(p)
+            result[key] = torch.stack(padded)
+        else:
+            result[key] = torch.stack(tensors)
+    return result

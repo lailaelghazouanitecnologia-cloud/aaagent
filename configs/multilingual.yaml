@@ -1,9 +1,13 @@
 # HCLM-D Multilingual Config — English + Spanish + Python
-# 20M model, 50M tokens, vocab 32k
-# Domain ratio: 25% EN / 25% ES / 50% Python
+# 20M model, 50M tokens, vocab 32,868 (32,768 BPE + 100 special)
+# Domain ratio: 70% EN / 20% ES / 10% Python
+#
+# EN sources: FineWeb-Edu (93%) + TinyStories (7%)
+# ES source:  OSCAR 2301 (es)
+# PY source:  The Stack v2 (filtered Python)
 
 model:
-  vocab_size: 32768           # 4x base — covers EN/ES/Python tokens
+  vocab_size: 32868           # 32,768 BPE + 100 special tokens
   embed_dim: 384
   max_seq_len: 512
   mask_token_id: 0
@@ -44,6 +48,8 @@ losses:
   lambda_balance: 0.01
   lambda_diversity: 0.001
   lambda_hierarchy: 0.01
+  lambda_slot: 0.5
+  lambda_block: 0.3
 
 training:
   optimizer: "adamw"
@@ -53,14 +59,19 @@ training:
   eps: 1.0e-8
   grad_clip: 1.0
 
-  warmup_steps: 500
+  warmup_steps: 200
   lr_schedule: "cosine"
-  total_steps: 50000          # 50M tokens / 32K tokens per batch ≈ 1500 steps, but extra for convergence
+  # 50M tokens / (64 batch × 512 seq) = ~1526 steps per epoch
+  # Train for ~10 epochs = ~15000 steps
+  total_steps: 15000
 
   structural_warmup:
-    gate_freeze_steps: 250
-    gate_ramp_end_steps: 1000
-    cluster_unfreeze_step: 250
+    # Phase boundaries scaled to 15K total steps
+    gate_freeze_steps: 100
+    gate_ramp_end_steps: 500
+    cluster_unfreeze_step: 100
+    # Phase 2 (structure emerges) starts at ~2000 steps
+    # This gives the model ~1500 steps of basic training first
 
   batch_size: 64
   seq_len: 512
@@ -70,16 +81,16 @@ training:
   dtype: "bfloat16"
 
   checkpoint_dir: "checkpoints"
-  save_every_steps: 5000
+  save_every_steps: 2500
   eval_every_steps: 500
   log_every_steps: 50
-  generate_every_steps: 2500
+  generate_every_steps: 1000
 
   sample_prompts:
     - "Once upon a time"
+    - "The function takes a list"
     - "Había una vez un"
     - "def calculate_"
-    - "The function takes"
     - "Esta clase implementa"
     - "import torch\n\nclass Model"
 
@@ -92,21 +103,19 @@ data:
   tokenizer_path: "data/tokenizer_multilingual.json"
   total_tokens: 50000000      # 50M tokens total
   domain_ratios:
-    en: 0.25                  # 12.5M tokens English (multi-source)
-    es: 0.25                  # 12.5M tokens Spanish
-    python: 0.50              # 25M tokens Python code
-  # EN breakdown (within the 25% budget):
-  #   15% TinyStories — narrative, simple structure
-  #   30% Wikipedia EN — factual, encyclopedic, formal
-  #   25% OpenOrca — instruction-following, Q&A, reasoning
-  #   30% FineWeb-Edu — high-quality educational web text
+    en: 0.70                  # 35M tokens English
+    es: 0.20                  # 10M tokens Spanish
+    python: 0.10              # 5M tokens Python
+  # EN breakdown (within the 70% budget):
+  #   93% FineWeb-Edu — high-quality educational web text
+  #    7% TinyStories — narrative structure, slot/block annotation
   num_workers: auto
   prefetch_factor: 2
 
 wandb:
   project: "hclm-d"
   entity: null
-  run_name: "multilingual-en-es-py"
+  run_name: "multilingual-70en-20es-10py"
   tags: ["multilingual", "english", "spanish", "python", "diffusion"]
 
 # ── Cloud providers ──
