@@ -29,14 +29,17 @@ def _create_loader_with_fallback(
     num_workers: int,
     seq_len: int,
     shuffle: bool = True,
+    embed_dim: int = 384,
+    n_layers: int = 8,
 ) -> DataLoader:
     """Try to create a DataLoader; reduce batch size on OOM.
 
     Tests a single forward pass to detect OOM before training starts.
-    Tries batch_size → batch_size * 3/4 → batch_size // 2 → 64.
+    Tries batch_size → batch_size * 3/4 → batch_size // 2 → min(batch_size, 16).
     """
-    candidates = sorted(set([batch_size, batch_size * 3 // 4, batch_size // 2, 64]), reverse=True)
-    candidates = [b for b in candidates if b >= 16]
+    min_batch = min(batch_size, 16)
+    candidates = sorted(set([batch_size, batch_size * 3 // 4, batch_size // 2, min_batch]), reverse=True)
+    candidates = [b for b in candidates if b >= 1]
 
     for bs in candidates:
         loader = DataLoader(
@@ -56,7 +59,7 @@ def _create_loader_with_fallback(
             test_batch = next(iter(loader))
             test_input = test_batch["input_ids"].to("cuda")
             # Rough memory estimate: batch × seq × embed × 4 (activations) × layers
-            mem_needed = bs * seq_len * 384 * 4 * 8 * 4  # conservative bytes estimate
+            mem_needed = bs * seq_len * embed_dim * 4 * n_layers * 4  # conservative bytes estimate
             mem_available = torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated()
             del test_input, test_batch
             torch.cuda.synchronize()
@@ -75,10 +78,10 @@ def _create_loader_with_fallback(
             else:
                 raise
 
-    # Fallback to smallest
-    logging.info("Falling back to batch_size=64")
+    # Fallback to smallest candidate
+    logging.info("Falling back to batch_size=%d", min_batch)
     return DataLoader(
-        dataset, batch_size=64, shuffle=shuffle, collate_fn=collate_fn,
+        dataset, batch_size=min_batch, shuffle=shuffle, collate_fn=collate_fn,
         num_workers=num_workers, pin_memory=True,
     )
 
@@ -164,8 +167,11 @@ def main():
     train_dataset = HCLMDataset(train_tokens, seq_len=seq_len)
 
     # Auto batch size: try configured, fall back on OOM
+    embed_dim = config.get("model", {}).get("embed_dim", 384)
+    n_layers = config.get("model", {}).get("transformer", {}).get("n_layers", 8)
     train_loader = _create_loader_with_fallback(
         train_dataset, batch_size, num_workers, seq_len, shuffle=True,
+        embed_dim=embed_dim, n_layers=n_layers,
     )
     actual_batch_size = train_loader.batch_size
 
