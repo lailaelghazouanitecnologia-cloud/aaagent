@@ -22,7 +22,7 @@ model:
 
 losses:
   lambda_balance: 0.01
-  lambda_diversity: 0.001
+  lambda_diversity: 0.005
   lambda_hierarchy: 0.05
 
 training:
@@ -35,7 +35,7 @@ training:
     temp_anneal_start: 2000
     temp_anneal_end: 20000
     temp_start: 1.0
-    temp_end: 0.3
+    temp_end: 0.5
     # Coarse router uses 60% of fine temperature (sharper routing for M=8)
     coarse_temp_ratio: 0.6
 
