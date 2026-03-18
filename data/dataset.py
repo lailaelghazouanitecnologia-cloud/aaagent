@@ -1,4 +1,16 @@
-"""Streaming dataset for HCLM-D training with diffusion masking."""
+"""Dataset for Za v7 training with structure-aware masking.
+
+Each item returns:
+  - input_ids: Clean token IDs [seq_len]
+  - attention_mask: Padding mask [seq_len] (1=real, 0=pad)
+  - slot_positions: Positions of slot starts [max_slots] (-1=empty)
+  - block_boundaries: Block (start, end) pairs [max_blocks, 2] (-1=empty)
+  - n_slots: Number of real slots (scalar)
+  - n_blocks: Number of real blocks (scalar)
+
+Masking is NOT applied in the dataset — the trainer handles it
+(DiffusionMasker in Phase 0-1, MultiLevelMasker in Phase 2+).
+"""
 
 from __future__ import annotations
 
@@ -7,37 +19,38 @@ from typing import Optional
 import torch
 from torch.utils.data import Dataset
 
-from data.masking import DiffusionMasker
-from data.tokenizer import PAD_TOKEN_ID
+from data.tokens import (
+    PAD_TOKEN_ID,
+    SLOT_START_ID,
+    SLOT_END_ID,
+    BLOCK_START_ID,
+    BLOCK_END_ID,
+)
 
 
-class HCLMDataset(Dataset):
-    """Dataset that returns tokenized sequences ready for masked diffusion training.
+# Limits for collation (fixed-size tensors)
+MAX_SLOTS_PER_SEQ = 32
+MAX_BLOCKS_PER_SEQ = 16
 
-    Each item returns:
-        - input_ids: Original token IDs (clean sequence), shape [seq_len]
-        - masked_ids: Token IDs with diffusion masking applied, shape [seq_len]
-        - mask: Boolean mask indicating which positions are masked, shape [seq_len]
-        - attention_mask: Padding mask (1 = real token, 0 = padding), shape [seq_len]
+
+class ZaDataset(Dataset):
+    """Dataset for Za v7 with structure annotation.
+
+    Scans each sequence for [SLOT_START]/[SLOT_END] and
+    [BLOCK_START]/[BLOCK_END] delimiters and extracts
+    slot positions and block boundaries for multi-level masking.
     """
 
     def __init__(
         self,
         token_ids: torch.Tensor,
-        seq_len: int = 512,
-        masker: Optional[DiffusionMasker] = None,
-        mask_token_id: int = 0,
+        seq_len: int = 2048,
+        max_slots: int = MAX_SLOTS_PER_SEQ,
+        max_blocks: int = MAX_BLOCKS_PER_SEQ,
     ):
-        """
-        Args:
-            token_ids: Flat tensor of all token IDs in the corpus.
-            seq_len: Fixed sequence length (will chunk the corpus).
-            masker: DiffusionMasker instance. If None, creates default.
-            mask_token_id: Token ID used for [MASK].
-        """
         self.seq_len = seq_len
-        self.mask_token_id = mask_token_id
-        self.masker = masker or DiffusionMasker(mask_token_id=mask_token_id)
+        self.max_slots = max_slots
+        self.max_blocks = max_blocks
 
         # Chunk the flat token tensor into sequences
         n_tokens = len(token_ids)
@@ -51,15 +64,66 @@ class HCLMDataset(Dataset):
         input_ids = self.sequences[idx]
         attention_mask = (input_ids != PAD_TOKEN_ID).long()
 
-        # Apply diffusion masking
-        masked_ids, mask = self.masker.mask(input_ids, attention_mask)
+        # Extract structure from delimiter tokens
+        slot_positions, n_slots = self._find_slots(input_ids)
+        block_boundaries, n_blocks = self._find_blocks(input_ids)
 
         return {
             "input_ids": input_ids,
-            "masked_ids": masked_ids,
-            "mask": mask,
             "attention_mask": attention_mask,
+            "slot_positions": slot_positions,
+            "block_boundaries": block_boundaries,
+            "n_slots": torch.tensor(n_slots, dtype=torch.long),
+            "n_blocks": torch.tensor(n_blocks, dtype=torch.long),
         }
+
+    def _find_slots(self, ids: torch.Tensor) -> tuple[torch.Tensor, int]:
+        """Find positions of [SLOT_START] tokens in the sequence.
+
+        Returns:
+            (positions [max_slots], count)
+        """
+        positions = torch.full((self.max_slots,), -1, dtype=torch.long)
+        slot_idx = 0
+
+        for i in range(len(ids)):
+            if ids[i].item() == SLOT_START_ID and slot_idx < self.max_slots:
+                positions[slot_idx] = i
+                slot_idx += 1
+
+        return positions, slot_idx
+
+    def _find_blocks(self, ids: torch.Tensor) -> tuple[torch.Tensor, int]:
+        """Find (start, end) boundaries of blocks.
+
+        A block is delimited by [BLOCK_START] ... [BLOCK_END].
+        Nested blocks are NOT supported (first match wins).
+
+        Returns:
+            (boundaries [max_blocks, 2], count)
+        """
+        boundaries = torch.full((self.max_blocks, 2), -1, dtype=torch.long)
+        block_idx = 0
+        in_block = False
+        start = 0
+
+        for i in range(len(ids)):
+            tok = ids[i].item()
+            if tok == BLOCK_START_ID and not in_block:
+                in_block = True
+                start = i
+            elif tok == BLOCK_END_ID and in_block:
+                if block_idx < self.max_blocks:
+                    boundaries[block_idx, 0] = start
+                    boundaries[block_idx, 1] = i + 1  # exclusive end
+                    block_idx += 1
+                in_block = False
+
+        return boundaries, block_idx
+
+
+# Backward compat alias
+HCLMDataset = ZaDataset
 
 
 def collate_fn(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:

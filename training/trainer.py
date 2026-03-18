@@ -152,9 +152,21 @@ class Trainer:
             )
             self._warmup_version = "v4"
 
-        # Masker
+        # Masker — basic (Phase 0-1) + multi-level (Phase 2+)
         mask_token_id = self.config.get("model", {}).get("mask_token_id", 0)
         self.masker = DiffusionMasker(mask_token_id=mask_token_id)
+
+        # Multi-level masker for Phase 2+ (only if v7 warmup)
+        self.ml_masker = None
+        if self._warmup_version == "v7":
+            from diffusion.masking_multilevel import MultiLevelMasker
+            self.ml_masker = MultiLevelMasker(
+                mask_token_id=mask_token_id,
+                p_token=0.6,
+                p_span=0.2,
+                p_slot=0.1,
+                p_block=0.1,
+            )
 
         # Training state
         self.global_step = 0
@@ -419,8 +431,55 @@ class Trainer:
         input_ids = batch["input_ids"].to(self.device)
         attention_mask = batch["attention_mask"].to(self.device)
 
-        # Apply diffusion masking
-        masked_ids, mask = self.masker.mask_batch(input_ids, attention_mask)
+        # Apply masking — multi-level in Phase 2+, token-only otherwise
+        use_multilevel = (
+            self.ml_masker is not None
+            and self._warmup_version == "v7"
+            and hasattr(self.warmup, "is_multilevel_active")
+            and self.warmup.is_multilevel_active(self.global_step)
+        )
+
+        slot_mask = None
+        block_mask = None
+        block_boundaries_batch = None
+
+        if use_multilevel:
+            # Extract structure info from batch (if available)
+            slot_positions = batch.get("slot_positions")
+            block_boundaries = batch.get("block_boundaries")
+            n_slots = batch.get("n_slots")
+            n_blocks = batch.get("n_blocks")
+
+            # Move to device
+            if slot_positions is not None:
+                slot_positions = slot_positions.to(self.device)
+            if block_boundaries is not None:
+                block_boundaries = block_boundaries.to(self.device)
+
+            # Use first example's boundaries as representative
+            # (MultiLevelMasker expects shared boundaries for now)
+            bb = None
+            sp = None
+            if block_boundaries is not None and n_blocks is not None:
+                nb = n_blocks[0].item() if n_blocks is not None else 0
+                if nb > 0:
+                    bb = block_boundaries[0, :nb]
+            if slot_positions is not None and n_slots is not None:
+                ns = n_slots[0].item() if n_slots is not None else 0
+                if ns > 0:
+                    sp = slot_positions[0, :ns]
+
+            masked_ids, ml_mask = self.ml_masker.mask_batch(
+                input_ids, attention_mask,
+                block_boundaries=bb,
+                slot_positions=sp,
+            )
+            mask = ml_mask.combined_mask
+            slot_mask = ml_mask.slot_mask
+            block_mask = ml_mask.block_mask
+            block_boundaries_batch = ml_mask.block_boundaries
+        else:
+            masked_ids, mask = self.masker.mask_batch(input_ids, attention_mask)
 
         # Structural warmup: get gate scale, temperature, and loss multipliers
         gate_value = self.warmup.get_gate_value(self.global_step)
@@ -510,6 +569,9 @@ class Trainer:
                 fine_to_coarse_weights=fine_to_coarse_weights,
                 coarse_routing_weights=coarse_routing_weights,
                 loss_multipliers=loss_multipliers,
+                slot_mask=slot_mask,
+                block_mask=block_mask,
+                block_boundaries=block_boundaries_batch,
             )
 
         # Backward
@@ -627,15 +689,24 @@ class Trainer:
             except Exception:
                 pass
 
+        # Build loss string
+        loss_parts = (
+            f"diff: {loss_output.diffusion.item():.4f}"
+            f", bal: {loss_output.balance.item():.4f}"
+            f", div: {loss_output.diversity.item():.4f}"
+            f", hier: {loss_output.hierarchy.item():.4f}"
+        )
+        if hasattr(loss_output, "slot") and loss_output.slot.item() > 0:
+            loss_parts += f", slot: {loss_output.slot.item():.4f}"
+        if hasattr(loss_output, "block") and loss_output.block.item() > 0:
+            loss_parts += f", blk: {loss_output.block.item():.4f}"
+
         logger.info(
-            "Step %d | Loss: %.4f (diff: %.4f, bal: %.4f, div: %.4f, hier: %.4f)"
+            "Step %d | Loss: %.4f (%s)"
             " | %.0f tok/s | GPU: %.1fGB%s",
             self.global_step,
             loss_output.total.item(),
-            loss_output.diffusion.item(),
-            loss_output.balance.item(),
-            loss_output.diversity.item(),
-            loss_output.hierarchy.item(),
+            loss_parts,
             tok_per_sec,
             gpu_mem_used,
             cluster_info,
