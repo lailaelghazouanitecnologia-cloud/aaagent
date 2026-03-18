@@ -23,17 +23,17 @@ def diffusion_loss(
     Returns:
         Scalar loss value.
     """
-    # Flatten
+    # Only compute cross-entropy on masked positions to save memory
     B, S, V = logits.shape
-    logits_flat = logits.view(-1, V)  # [B*S, V]
-    targets_flat = targets.view(-1)  # [B*S]
     mask_flat = mask.view(-1)  # [B*S]
+    masked_idx = mask_flat.nonzero(as_tuple=False).squeeze(-1)  # [N_masked]
 
-    # Compute per-token cross-entropy
-    ce = F.cross_entropy(logits_flat, targets_flat, reduction="none")  # [B*S]
+    if masked_idx.numel() == 0:
+        return logits.sum() * 0.0  # no masked tokens, return zero grad-able loss
 
-    # Only average over masked positions
-    n_masked = mask_flat.sum().clamp(min=1)
-    loss = (ce * mask_flat.float()).sum() / n_masked
+    logits_masked = logits.view(-1, V)[masked_idx]  # [N_masked, V]
+    targets_masked = targets.view(-1)[masked_idx]  # [N_masked]
+
+    loss = F.cross_entropy(logits_masked, targets_masked)
 
     return loss
